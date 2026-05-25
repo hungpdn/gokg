@@ -10,7 +10,7 @@ import (
 
 func TestParseWorkspace(t *testing.T) {
 	// We can test the parser on the parser package itself
-	parser := NewParser("gokg")
+	parser := NewParser("github.com/hungpdn/gokg")
 
 	ctx := context.Background()
 	result, err := parser.ParseWorkspace(ctx, ".")
@@ -44,7 +44,7 @@ func TestParseWorkspace(t *testing.T) {
 }
 
 func TestParseWorkspaceContextCancel(t *testing.T) {
-	parser := NewParser("gokg")
+	parser := NewParser("github.com/hungpdn/gokg")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately

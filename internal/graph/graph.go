@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/hungpdn/gokg/internal/parser"
@@ -109,6 +110,49 @@ func (g *Graph) BuildFromParseResult(ctx context.Context, result *parser.ParseRe
 			// Some edges might point to unresolved boundary nodes, just ignore or log
 			continue
 		}
+	}
+
+	return nil
+}
+
+// LoadFromStorage reads the graph from the local storage.
+func (g *Graph) LoadFromStorage(ctx context.Context) error {
+	if g.store == nil {
+		return fmt.Errorf("no storage backend available")
+	}
+
+	var edgesData [][]byte
+
+	// Temporarily unset g.store so AddNode and AddEdge don't write back to DB
+	store := g.store
+	g.store = nil
+	defer func() { g.store = store }()
+
+	err := store.Iterate(ctx, func(key []byte, value []byte) error {
+		keyStr := string(key)
+		if strings.HasPrefix(keyStr, "node:") {
+			var pNode parser.Node
+			if err := json.Unmarshal(value, &pNode); err != nil {
+				return err
+			}
+			_, _ = g.AddNode(ctx, &pNode)
+		} else if strings.HasPrefix(keyStr, "edge:") {
+			// Copy the value as Badger reuses the slice
+			edgesData = append(edgesData, append([]byte(nil), value...))
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to iterate storage: %w", err)
+	}
+
+	for _, data := range edgesData {
+		var pEdge parser.Edge
+		if err := json.Unmarshal(data, &pEdge); err != nil {
+			return err
+		}
+		_ = g.AddEdge(ctx, &pEdge)
 	}
 
 	return nil

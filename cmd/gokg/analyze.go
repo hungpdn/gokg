@@ -9,6 +9,7 @@ import (
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/modfile"
 )
 
 var analyzeCmd = &cobra.Command{
@@ -28,7 +29,16 @@ var analyzeCmd = &cobra.Command{
 
 		modulePrefix, _ := cmd.Flags().GetString("module")
 		if modulePrefix == "" {
-			modulePrefix = "gokg"
+			data, err := os.ReadFile("go.mod")
+			if err == nil {
+				f, err := modfile.Parse("go.mod", data, nil)
+				if err == nil && f.Module != nil {
+					modulePrefix = f.Module.Mod.Path
+				}
+			}
+			if modulePrefix == "" {
+				modulePrefix = "gokg"
+			}
 		}
 
 		// Parse Workspace

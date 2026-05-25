@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"strings"
 	"sync"
 
 	"golang.org/x/tools/go/packages"
@@ -34,6 +35,17 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 		edge.To = filename
 		edge.Type = EdgeTypeContains
 		result.Edges = append(result.Edges, edge)
+
+		for _, imp := range file.Imports {
+			if imp.Path != nil {
+				importPath := strings.Trim(imp.Path.Value, `"`)
+				impEdge := NewEdge()
+				impEdge.From = filename
+				impEdge.To = importPath
+				impEdge.Type = EdgeTypeImports
+				result.Edges = append(result.Edges, impEdge)
+			}
+		}
 		mu.Unlock()
 
 		var currentFunc string
@@ -44,6 +56,44 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 			}
 
 			switch node := n.(type) {
+			case *ast.TypeSpec:
+				obj := pkg.TypesInfo.Defs[node.Name]
+				if obj != nil {
+					var pkgPath string
+					if obj.Pkg() != nil {
+						pkgPath = obj.Pkg().Path()
+					}
+					typeID := pkgPath + "." + obj.Name()
+
+					tNode := NewNode()
+					tNode.ID = typeID
+					tNode.Name = obj.Name()
+					tNode.PkgPath = pkgPath
+					tNode.FilePath = filename
+					start := pkg.Fset.Position(node.Pos()).Line
+					end := pkg.Fset.Position(node.End()).Line
+					tNode.Lines = [2]int{start, end}
+
+					if _, ok := node.Type.(*ast.StructType); ok {
+						tNode.Type = NodeTypeStruct
+					} else if _, ok := node.Type.(*ast.InterfaceType); ok {
+						tNode.Type = NodeTypeInterface
+					} else {
+						ReleaseNode(tNode)
+						return true
+					}
+
+					mu.Lock()
+					result.Nodes = append(result.Nodes, tNode)
+					
+					containsEdge := NewEdge()
+					containsEdge.From = filename
+					containsEdge.To = typeID
+					containsEdge.Type = EdgeTypeContains
+					result.Edges = append(result.Edges, containsEdge)
+					mu.Unlock()
+				}
+
 			case *ast.FuncDecl:
 				obj := pkg.TypesInfo.Defs[node.Name]
 				if obj != nil {

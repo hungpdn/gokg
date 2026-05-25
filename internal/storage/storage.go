@@ -10,6 +10,9 @@ type Storage interface {
 	// Get retrieves a value by key from the database.
 	Get(ctx context.Context, key []byte) ([]byte, error)
 
+	// Iterate iterates over all key-value pairs in the database.
+	Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error
+
 	// Close cleanly shuts down the database.
 	Close() error
 }

@@ -57,6 +57,31 @@ func (b *badgerStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
 	return valCopy, nil
 }
 
+func (b *badgerStorage) Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return b.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			item := it.Item()
+			k := item.Key()
+			err := item.Value(func(v []byte) error {
+				return fn(k, v)
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (b *badgerStorage) Close() error {
 	if err := b.db.Close(); err != nil {
 		return fmt.Errorf("failed to close badger db: %w", err)

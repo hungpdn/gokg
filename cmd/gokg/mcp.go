@@ -24,12 +24,10 @@ var mcpCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		// For MCP server we need to load the graph. Wait, normally MCP queries the loaded graph.
-		// For this prototype, we'll assume the graph is rebuilt or loaded here.
 		g := graph.NewGraph(store)
-		// We'd load from badger here, but for simplicity, the query builder requires a built graph.
-		// A full implementation would deserialize nodes/edges from BadgerDB.
-		// For the sake of this prompt, we just provide the graph instance to the server.
+		if err := g.LoadFromStorage(ctx); err != nil {
+			return fmt.Errorf("failed to load graph from storage: %w", err)
+		}
 
 		server := mcp.NewServer(g)
 		return server.Start(ctx)

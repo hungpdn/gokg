@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"go/types"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/tools/go/packages"
@@ -88,6 +89,57 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Post-processing: IMPLEMENTS edges
+	type structInfo struct {
+		id string
+		t  types.Type
+	}
+	type ifaceInfo struct {
+		id string
+		t  *types.Interface
+	}
+	var structs []structInfo
+	var ifaces []ifaceInfo
+
+	for _, pkg := range pkgs {
+		for _, obj := range pkg.TypesInfo.Defs {
+			if obj == nil {
+				continue
+			}
+			if typeName, ok := obj.(*types.TypeName); ok {
+				if named, ok := typeName.Type().(*types.Named); ok {
+					var pkgPath string
+					if obj.Pkg() != nil {
+						pkgPath = obj.Pkg().Path()
+					}
+					id := pkgPath + "." + obj.Name()
+
+					if _, ok := named.Underlying().(*types.Struct); ok {
+						structs = append(structs, structInfo{id: id, t: named})
+						structs = append(structs, structInfo{id: id, t: types.NewPointer(named)})
+					} else if iType, ok := named.Underlying().(*types.Interface); ok {
+						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
+					}
+				}
+			}
+		}
+	}
+
+	for _, s := range structs {
+		for _, i := range ifaces {
+			if i.t.Empty() {
+				continue // Skip empty interface "any" or "interface{}"
+			}
+			if types.Implements(s.t, i.t) {
+				edge := NewEdge()
+				edge.From = s.id
+				edge.To = i.id
+				edge.Type = EdgeTypeImplements
+				result.Edges = append(result.Edges, edge)
+			}
+		}
 	}
 
 	return result, nil

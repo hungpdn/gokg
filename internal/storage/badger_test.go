@@ -57,3 +57,27 @@ func TestBadgerStorageContextCancel(t *testing.T) {
 	_, err = store.Get(ctx, []byte("key"))
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestBadgerStorageIterate(t *testing.T) {
+	dir, err := os.MkdirTemp("", "badger-test-iterate-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	store, err := NewBadgerStorage(dir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	_ = store.Put(ctx, []byte("node:1"), []byte("data1"))
+	_ = store.Put(ctx, []byte("node:2"), []byte("data2"))
+	_ = store.Put(ctx, []byte("edge:1"), []byte("data3"))
+
+	count := 0
+	err = store.Iterate(ctx, func(key []byte, value []byte) error {
+		count++
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+}
