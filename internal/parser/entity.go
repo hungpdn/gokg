@@ -1,6 +1,9 @@
 package parser
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // NodeType defines the type of a parsed node
 type NodeType string
@@ -80,4 +83,26 @@ func NewEdge() *Edge {
 func ReleaseEdge(e *Edge) {
 	*e = Edge{} // Reset
 	edgePool.Put(e)
+}
+
+// BuildID optimizes string concatenation for node IDs using strings.Builder
+func BuildID(parts ...string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	
+	var length int
+	for _, p := range parts {
+		length += len(p)
+	}
+	
+	var b strings.Builder
+	b.Grow(length)
+	for _, p := range parts {
+		b.WriteString(p)
+	}
+	return b.String()
 }

@@ -114,7 +114,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 					if obj.Pkg() != nil {
 						pkgPath = obj.Pkg().Path()
 					}
-					id := pkgPath + "." + obj.Name()
+					id := BuildID(pkgPath, ".", obj.Name())
 
 					if _, ok := named.Underlying().(*types.Struct); ok {
 						structs = append(structs, structInfo{id: id, t: named})

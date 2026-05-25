@@ -63,7 +63,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					if obj.Pkg() != nil {
 						pkgPath = obj.Pkg().Path()
 					}
-					typeID := pkgPath + "." + obj.Name()
+					typeID := BuildID(pkgPath, ".", obj.Name())
 
 					tNode := NewNode()
 					tNode.ID = typeID
@@ -101,10 +101,10 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					if obj.Pkg() != nil {
 						pkgPath = obj.Pkg().Path()
 					}
-					funcID := pkgPath + "." + obj.Name()
+					funcID := BuildID(pkgPath, ".", obj.Name())
 					if sig, ok := obj.Type().(*types.Signature); ok && sig.Recv() != nil {
 						// It's a method
-						funcID = pkgPath + "." + sig.Recv().Type().String() + "." + obj.Name()
+						funcID = BuildID(pkgPath, ".", sig.Recv().Type().String(), ".", obj.Name())
 					}
 
 					fnNode := NewNode()
@@ -147,7 +147,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 							if calledObj.Pkg() != nil {
 								pkgPath = calledObj.Pkg().Path()
 							}
-							calledID := pkgPath + "." + calledObj.Name()
+							calledID := BuildID(pkgPath, ".", calledObj.Name())
 
 							edge := NewEdge()
 							edge.From = currentFunc
@@ -180,7 +180,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 							if calledObj.Pkg() != nil {
 								pkgPath = calledObj.Pkg().Path()
 							}
-							calledID = pkgPath + "." + calledObj.Name()
+							calledID = BuildID(pkgPath, ".", calledObj.Name())
 						}
 					} else {
 						// It might be an inline anonymous function, construct a unique ID
