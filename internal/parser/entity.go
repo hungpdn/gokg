@@ -1,0 +1,83 @@
+package parser
+
+import "sync"
+
+// NodeType defines the type of a parsed node
+type NodeType string
+
+const (
+	NodeTypePackage   NodeType = "PACKAGE"
+	NodeTypeFile      NodeType = "FILE"
+	NodeTypeStruct    NodeType = "STRUCT"
+	NodeTypeInterface NodeType = "INTERFACE"
+	NodeTypeFunc      NodeType = "FUNC"
+	NodeTypeMethod    NodeType = "METHOD"
+	NodeTypeVar       NodeType = "VAR"
+	NodeTypeChannel   NodeType = "CHANNEL"
+	NodeTypeBoundary  NodeType = "BOUNDARY" // External package/func
+)
+
+// Node represents an entity in the Go codebase
+type Node struct {
+	ID       string // Unique identifier (e.g. fully qualified name or path)
+	Type     NodeType
+	Name     string
+	PkgPath  string
+	FilePath string
+	Lines    [2]int // Start, End line
+}
+
+// EdgeType defines the relation between two nodes
+type EdgeType string
+
+const (
+	EdgeTypeCalls        EdgeType = "CALLS"
+	EdgeTypeImplements   EdgeType = "IMPLEMENTS"
+	EdgeTypeImports      EdgeType = "IMPORTS"
+	EdgeTypeSpawns       EdgeType = "SPAWNS"
+	EdgeTypeSendsTo      EdgeType = "SENDS_TO"
+	EdgeTypeReceivesFrom EdgeType = "RECEIVES_FROM"
+	EdgeTypeContains     EdgeType = "CONTAINS" // e.g. Package contains File, File contains Func
+)
+
+// Edge represents a relation between two nodes
+type Edge struct {
+	From string
+	To   string
+	Type EdgeType
+}
+
+// Memory Optimization: Object pools for Node and Edge
+var nodePool = sync.Pool{
+	New: func() interface{} {
+		return new(Node)
+	},
+}
+
+var edgePool = sync.Pool{
+	New: func() interface{} {
+		return new(Edge)
+	},
+}
+
+// NewNode acquires a Node from the pool
+func NewNode() *Node {
+	return nodePool.Get().(*Node)
+}
+
+// ReleaseNode resets and returns a Node to the pool
+func ReleaseNode(n *Node) {
+	*n = Node{} // Reset
+	nodePool.Put(n)
+}
+
+// NewEdge acquires an Edge from the pool
+func NewEdge() *Edge {
+	return edgePool.Get().(*Edge)
+}
+
+// ReleaseEdge resets and returns an Edge to the pool
+func ReleaseEdge(e *Edge) {
+	*e = Edge{} // Reset
+	edgePool.Put(e)
+}
