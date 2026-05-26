@@ -3,9 +3,9 @@ package parser
 import (
 	"context"
 	"fmt"
+	"go/types"
 	"strings"
 	"sync"
-	"go/types"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/tools/go/packages"
@@ -144,5 +144,3 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 
 	return result, nil
 }
-
-

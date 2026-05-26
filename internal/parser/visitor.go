@@ -85,7 +85,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 
 					mu.Lock()
 					result.Nodes = append(result.Nodes, tNode)
-					
+
 					containsEdge := NewEdge()
 					containsEdge.From = filename
 					containsEdge.To = typeID
@@ -196,7 +196,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					result.Edges = append(result.Edges, edge)
 					mu.Unlock()
 				}
-				
+
 			case *ast.SendStmt:
 				if currentFunc != "" {
 					// SENDS_TO
@@ -206,12 +206,12 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					chanType := pkg.TypesInfo.TypeOf(node.Chan)
 					edge.To = chanType.String()
 					edge.Type = EdgeTypeSendsTo
-					
+
 					mu.Lock()
 					result.Edges = append(result.Edges, edge)
 					mu.Unlock()
 				}
-				
+
 			case *ast.UnaryExpr:
 				if currentFunc != "" && node.Op.String() == "<-" {
 					// RECEIVES_FROM
@@ -220,7 +220,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					chanType := pkg.TypesInfo.TypeOf(node.X)
 					edge.To = chanType.String()
 					edge.Type = EdgeTypeReceivesFrom
-					
+
 					mu.Lock()
 					result.Edges = append(result.Edges, edge)
 					mu.Unlock()

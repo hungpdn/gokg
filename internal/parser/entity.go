@@ -93,12 +93,12 @@ func BuildID(parts ...string) string {
 	if len(parts) == 1 {
 		return parts[0]
 	}
-	
+
 	var length int
 	for _, p := range parts {
 		length += len(p)
 	}
-	
+
 	var b strings.Builder
 	b.Grow(length)
 	for _, p := range parts {
