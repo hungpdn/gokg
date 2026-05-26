@@ -82,6 +82,19 @@ func (b *badgerStorage) Iterate(ctx context.Context, fn func(key []byte, value [
 	})
 }
 
+func (b *badgerStorage) Delete(ctx context.Context, key []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := b.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete(key)
+	})
+	if err != nil && err != badger.ErrKeyNotFound {
+		return fmt.Errorf("failed to delete key: %w", err)
+	}
+	return nil
+}
+
 func (b *badgerStorage) Close() error {
 	if err := b.db.Close(); err != nil {
 		return fmt.Errorf("failed to close badger db: %w", err)

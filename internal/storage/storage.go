@@ -13,6 +13,9 @@ type Storage interface {
 	// Iterate iterates over all key-value pairs in the database.
 	Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error
 
+	// Delete removes a key-value pair from the database.
+	Delete(ctx context.Context, key []byte) error
+
 	// Close cleanly shuts down the database.
 	Close() error
 }

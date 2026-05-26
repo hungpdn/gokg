@@ -144,3 +144,107 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 
 	return result, nil
 }
+
+// ParsePackage parses a single package directory and returns its entities.
+func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+		Context: ctx,
+		Dir:     dir,
+	}
+
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		return nil, fmt.Errorf("packages.Load failed: %w", err)
+	}
+	if packages.PrintErrors(pkgs) > 0 {
+		return nil, fmt.Errorf("encountered errors during package loading")
+	}
+
+	result := &ParseResult{
+		Nodes: make([]*Node, 0),
+		Edges: make([]*Edge, 0),
+	}
+
+	var mu sync.Mutex // For extractPackageEntities
+
+	for _, pkg := range pkgs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		isInternal := strings.HasPrefix(pkg.PkgPath, p.ModulePrefix)
+
+		node := NewNode()
+		node.ID = pkg.PkgPath
+		node.Name = pkg.Name
+		node.PkgPath = pkg.PkgPath
+
+		if !isInternal {
+			node.Type = NodeTypeBoundary
+			result.Nodes = append(result.Nodes, node)
+			continue
+		}
+
+		node.Type = NodeTypePackage
+		result.Nodes = append(result.Nodes, node)
+
+		if err := p.extractPackageEntities(ctx, pkg, &mu, result); err != nil {
+			return nil, err
+		}
+	}
+
+	// Post-processing: IMPLEMENTS edges
+	type structInfo struct {
+		id string
+		t  types.Type
+	}
+	type ifaceInfo struct {
+		id string
+		t  *types.Interface
+	}
+	var structs []structInfo
+	var ifaces []ifaceInfo
+
+	for _, pkg := range pkgs {
+		for _, obj := range pkg.TypesInfo.Defs {
+			if obj == nil {
+				continue
+			}
+			if typeName, ok := obj.(*types.TypeName); ok {
+				if named, ok := typeName.Type().(*types.Named); ok {
+					var pkgPath string
+					if obj.Pkg() != nil {
+						pkgPath = obj.Pkg().Path()
+					}
+					id := BuildID(pkgPath, ".", obj.Name())
+
+					if _, ok := named.Underlying().(*types.Struct); ok {
+						structs = append(structs, structInfo{id: id, t: named})
+						structs = append(structs, structInfo{id: id, t: types.NewPointer(named)})
+					} else if iType, ok := named.Underlying().(*types.Interface); ok {
+						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
+					}
+				}
+			}
+		}
+	}
+
+	for _, s := range structs {
+		for _, i := range ifaces {
+			if i.t.Empty() {
+				continue
+			}
+			if types.Implements(s.t, i.t) {
+				edge := NewEdge()
+				edge.From = s.id
+				edge.To = i.id
+				edge.Type = EdgeTypeImplements
+				result.Edges = append(result.Edges, edge)
+			}
+		}
+	}
+
+	return result, nil
+}

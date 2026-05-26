@@ -157,3 +157,56 @@ func (g *Graph) LoadFromStorage(ctx context.Context) error {
 
 	return nil
 }
+
+// RemovePackage removes all nodes and edges belonging to the given package path.
+func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	var nodesToRemove []int64
+	for id, node := range g.nodes {
+		if node.PkgPath == pkgPath {
+			nodesToRemove = append(nodesToRemove, id)
+		}
+	}
+
+	for _, id := range nodesToRemove {
+		node := g.nodes[id]
+
+		// Remove from Gonum graph
+		g.directed.RemoveNode(id)
+
+		// Remove from internal maps
+		delete(g.nodeMap, node.ID)
+		delete(g.nodes, id)
+
+		// Remove from BadgerDB
+		if g.store != nil {
+			_ = g.store.Delete(ctx, []byte("node:"+node.ID))
+		}
+
+		// Remove all outbound edges from this node
+		if outEdges, ok := g.edges[id]; ok {
+			for _, edge := range outEdges {
+				if g.store != nil {
+					key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
+					_ = g.store.Delete(ctx, []byte(key))
+				}
+			}
+			delete(g.edges, id)
+		}
+
+		// Remove all inbound edges to this node
+		for _, outEdges := range g.edges {
+			if edge, ok := outEdges[id]; ok {
+				if g.store != nil {
+					key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
+					_ = g.store.Delete(ctx, []byte(key))
+				}
+				delete(outEdges, id)
+			}
+		}
+	}
+
+	return nil
+}
