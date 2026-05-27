@@ -61,7 +61,6 @@ var exportCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(exportCmd)
 	exportCmd.Flags().String("db", ".gokg", "Path to BadgerDB directory")
 	exportCmd.Flags().String("format", "json", "Output format (json, mermaid, dot)")
 	exportCmd.Flags().String("out", "", "Output file path (leave empty for stdout)")

@@ -11,6 +11,7 @@ Unlike generic Tree-sitter-based tools, GoKG intimately understands Go semantics
 
 *   **Deep Semantic Parsing (Go-native)**: Extracts Packages, Files, Structs, Interfaces, Functions, and Methods.
 *   **Semantic Relationships**: Accurately maps `CALLS`, `IMPORTS`, `CONTAINS`, `IMPLEMENTS` (Implicit Interface deductions), `SPAWNS` (Goroutines), `SENDS_TO`, and `RECEIVES_FROM` (Channels).
+*   **Real-time Incremental Updates (Live Graph)**: Runs a background file watcher (`fsnotify`). When you hit Save, it incrementally removes and reparses only the modified package, updating the graph in milliseconds.
 *   **High Performance & Local Storage**: Uses [BadgerDB](https://github.com/dgraph-io/badger) to persist the graph on your local disk. It scales to massive codebases without blowing up your RAM.
 *   **MCP Server for AI Agents**: Fully compliant with the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol), providing standard JSON-RPC 2.0 `stdio` endpoints for AI models (like Claude 3.5 Sonnet, GPT-4, etc.) to query the codebase directly.
 *   **Visual Export**: Export your codebase architecture to `Mermaid`, `Graphviz DOT`, or `JSON` formats.

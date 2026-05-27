@@ -17,4 +17,5 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(mcpCmd)
+	rootCmd.AddCommand(exportCmd)
 }
