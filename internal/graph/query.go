@@ -16,6 +16,12 @@ type QueryBuilder struct {
 	g *Graph
 }
 
+type ConcurrencyConnection struct {
+	Node      *parser.Node `json:"node"`
+	Edge      *parser.Edge `json:"edge"`
+	Direction string       `json:"direction"`
+}
+
 // Query returns a new QueryBuilder for the graph.
 func (g *Graph) Query() *QueryBuilder {
 	return &QueryBuilder{g: g}
@@ -65,6 +71,26 @@ func (qb *QueryBuilder) GetBlastRadius(nodeID string) ([]*parser.Node, error) {
 
 // GetConcurrencyFlow returns goroutines and channels connected to this node.
 func (qb *QueryBuilder) GetConcurrencyFlow(nodeID string) ([]*parser.Node, error) {
+	connections, err := qb.GetConcurrencyGraph(nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	flows := make([]*parser.Node, 0, len(connections))
+	for _, conn := range connections {
+		if conn.Node == nil || seen[conn.Node.ID] {
+			continue
+		}
+		seen[conn.Node.ID] = true
+		flows = append(flows, conn.Node)
+	}
+
+	return flows, nil
+}
+
+// GetConcurrencyGraph returns goroutine and channel connections for a node.
+func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnection, error) {
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
@@ -73,18 +99,67 @@ func (qb *QueryBuilder) GetConcurrencyFlow(nodeID string) ([]*parser.Node, error
 		return nil, fmt.Errorf("node not found: %s", nodeID)
 	}
 
-	var flows []*parser.Node
-	nodes := qb.g.directed.From(id)
-	for nodes.Next() {
-		toID := nodes.Node().ID()
-		edge := qb.g.edges[id][toID]
-		if edge != nil && (edge.Type == parser.EdgeTypeSpawns || edge.Type == parser.EdgeTypeSendsTo || edge.Type == parser.EdgeTypeReceivesFrom) {
-			if pNode, ok := qb.g.nodes[toID]; ok {
-				flows = append(flows, pNode)
+	connections := make([]ConcurrencyConnection, 0)
+	seen := make(map[string]bool)
+
+	outbound := qb.g.directed.From(id)
+	for outbound.Next() {
+		toID := outbound.Node().ID()
+		pNode, ok := qb.g.nodes[toID]
+		if !ok || !isConcurrencyNode(pNode.Type) {
+			continue
+		}
+
+		for _, edge := range qb.g.edges[id][toID] {
+			if edge == nil || !isConcurrencyEdge(edge.Type) {
+				continue
 			}
+
+			key := fmt.Sprintf("out:%d:%s", toID, edge.Type)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			connections = append(connections, ConcurrencyConnection{Node: pNode, Edge: edge, Direction: "outbound"})
 		}
 	}
-	return flows, nil
+
+	inbound := qb.g.directed.To(id)
+	for inbound.Next() {
+		fromID := inbound.Node().ID()
+		pNode, ok := qb.g.nodes[fromID]
+		if !ok || !isConcurrencyNode(pNode.Type) {
+			continue
+		}
+
+		for _, edge := range qb.g.edges[fromID][id] {
+			if edge == nil {
+				continue
+			}
+			if !isConcurrencyEdge(edge.Type) && !(edge.Type == parser.EdgeTypeCalls && pNode.Type == parser.NodeTypeGoroutine) {
+				continue
+			}
+
+			key := fmt.Sprintf("in:%d:%s", fromID, edge.Type)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			connections = append(connections, ConcurrencyConnection{Node: pNode, Edge: edge, Direction: "inbound"})
+		}
+	}
+
+	return connections, nil
+}
+
+func isConcurrencyEdge(edgeType parser.EdgeType) bool {
+	return edgeType == parser.EdgeTypeSpawns ||
+		edgeType == parser.EdgeTypeSendsTo ||
+		edgeType == parser.EdgeTypeReceivesFrom
+}
+
+func isConcurrencyNode(nodeType parser.NodeType) bool {
+	return nodeType == parser.NodeTypeGoroutine || nodeType == parser.NodeTypeChannel
 }
 
 // GetImplementations returns all structs that implement the given interface node ID.
@@ -108,10 +183,12 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 	inbound := qb.g.directed.To(ifaceNumID)
 	for inbound.Next() {
 		fromNumID := inbound.Node().ID()
-		edge := qb.g.edges[fromNumID][ifaceNumID]
-		if edge != nil && edge.Type == parser.EdgeTypeImplements {
-			if pNode, ok := qb.g.nodes[fromNumID]; ok {
-				impls = append(impls, pNode)
+		for _, edge := range qb.g.edges[fromNumID][ifaceNumID] {
+			if edge != nil && edge.Type == parser.EdgeTypeImplements {
+				if pNode, ok := qb.g.nodes[fromNumID]; ok {
+					impls = append(impls, pNode)
+				}
+				break
 			}
 		}
 	}
@@ -211,8 +288,8 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 		if i < len(pathNodes)-1 {
 			nextNumID := pathNodes[i+1].ID()
 			if edgeMap, ok := qb.g.edges[numID]; ok {
-				if edge, ok := edgeMap[nextNumID]; ok {
-					pr.EdgeType = string(edge.Type)
+				if edges, ok := edgeMap[nextNumID]; ok && len(edges) > 0 {
+					pr.EdgeType = string(edges[0].Type)
 				}
 			}
 		}

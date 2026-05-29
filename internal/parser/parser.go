@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"go/types"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -44,6 +46,10 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	result := &ParseResult{
 		Nodes: make([]*Node, 0),
 		Edges: make([]*Edge, 0),
+	}
+
+	if err := p.buildFolderHierarchy(ctx, dir, pkgs, result); err != nil {
+		return nil, err
 	}
 
 	var mu sync.Mutex // To protect result slice appends if done concurrently
@@ -143,6 +149,138 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	}
 
 	return result, nil
+}
+
+func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*packages.Package, result *ParseResult) error {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+
+	folderIDs := make(map[string]bool)
+
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		if path != root && shouldSkipFolder(d.Name()) {
+			return filepath.SkipDir
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+
+		id := folderNodeID(rel)
+		if !folderIDs[id] {
+			folderIDs[id] = true
+
+			node := NewNode()
+			node.ID = id
+			node.Type = NodeTypeFolder
+			node.Name = rel
+			if rel == "." {
+				node.Name = "/"
+			}
+			node.FilePath = path
+			result.Nodes = append(result.Nodes, node)
+		}
+
+		if rel != "." {
+			parentRel := filepath.ToSlash(filepath.Dir(rel))
+			edge := NewEdge()
+			edge.From = folderNodeID(parentRel)
+			edge.To = id
+			edge.Type = EdgeTypeContains
+			result.Edges = append(result.Edges, edge)
+		}
+
+		return nil
+	}); err != nil {
+		return fmt.Errorf("build folder hierarchy: %w", err)
+	}
+
+	packageFolders := p.packageFolders(root, pkgs)
+	for folderID, pkgPaths := range packageFolders {
+		for pkgPath := range pkgPaths {
+			edge := NewEdge()
+			edge.From = folderID
+			edge.To = pkgPath
+			edge.Type = EdgeTypeContains
+			result.Edges = append(result.Edges, edge)
+		}
+	}
+
+	return nil
+}
+
+func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[string]map[string]bool {
+	packageFolders := make(map[string]map[string]bool)
+
+	for _, pkg := range pkgs {
+		if !strings.HasPrefix(pkg.PkgPath, p.ModulePrefix) {
+			continue
+		}
+
+		files := make([]string, 0, len(pkg.GoFiles)+len(pkg.CompiledGoFiles)+len(pkg.Syntax))
+		files = append(files, pkg.GoFiles...)
+		files = append(files, pkg.CompiledGoFiles...)
+		for _, file := range pkg.Syntax {
+			filename := pkg.Fset.Position(file.Pos()).Filename
+			if filename != "" {
+				files = append(files, filename)
+			}
+		}
+
+		for _, file := range files {
+			absFile := file
+			if !filepath.IsAbs(absFile) {
+				absFile = filepath.Join(root, absFile)
+			}
+			absFile, err := filepath.Abs(absFile)
+			if err != nil {
+				continue
+			}
+
+			relDir, err := filepath.Rel(root, filepath.Dir(absFile))
+			if err != nil || !isInsideWorkspace(relDir) {
+				continue
+			}
+
+			folderID := folderNodeID(filepath.ToSlash(relDir))
+			if packageFolders[folderID] == nil {
+				packageFolders[folderID] = make(map[string]bool)
+			}
+			packageFolders[folderID][pkg.PkgPath] = true
+		}
+	}
+
+	return packageFolders
+}
+
+func shouldSkipFolder(name string) bool {
+	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
+}
+
+func folderNodeID(rel string) string {
+	if rel == "" || rel == "." {
+		return "folder:."
+	}
+	return BuildID("folder:", filepath.ToSlash(rel))
+}
+
+func isInsideWorkspace(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../") && !filepath.IsAbs(rel))
 }
 
 // ParsePackage parses a single package directory and returns its entities.

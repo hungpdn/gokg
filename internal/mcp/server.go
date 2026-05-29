@@ -110,6 +110,17 @@ func (s *Server) handleToolsList(req *Request) *Response {
 			},
 		},
 		{
+			"name":        "get_concurrency_graph",
+			"description": "Returns goroutine and channel topology connected to a function, formatted as Markdown",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified function node ID"},
+				},
+				"required": []string{"node_id"},
+			},
+		},
+		{
 			"name":        "get_implementations",
 			"description": "Returns all structs that implement a given interface",
 			"inputSchema": map[string]interface{}{
@@ -188,6 +199,13 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 		}
 		return s.textResult(req.ID, formatNodeListMarkdown("Concurrency Flow", params.Arguments.NodeID, nodes))
 
+	case "get_concurrency_graph":
+		connections, err := qb.GetConcurrencyGraph(params.Arguments.NodeID)
+		if err != nil {
+			return s.errorResult(req.ID, err)
+		}
+		return s.textResult(req.ID, formatConcurrencyGraphMarkdown(params.Arguments.NodeID, connections))
+
 	case "get_implementations":
 		nodes, err := qb.GetImplementations(params.Arguments.InterfaceID)
 		if err != nil {
@@ -235,6 +253,31 @@ func formatNodeListMarkdown(title, nodeID string, nodes []*parser.Node) string {
 		}
 		b.WriteByte('\n')
 	}
+	return b.String()
+}
+
+func formatConcurrencyGraphMarkdown(nodeID string, connections []graph.ConcurrencyConnection) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("## Concurrency Graph of `%s`\n\n", nodeID))
+
+	if len(connections) == 0 {
+		b.WriteString("_No concurrency nodes found._\n")
+		return b.String()
+	}
+
+	b.WriteString(fmt.Sprintf("Found **%d** connection(s):\n\n", len(connections)))
+	for _, conn := range connections {
+		if conn.Node == nil || conn.Edge == nil {
+			continue
+		}
+
+		if conn.Direction == "inbound" {
+			b.WriteString(fmt.Sprintf("- **`%s`** (`%s`) --_%s_--> `%s`\n", conn.Node.Name, conn.Node.Type, conn.Edge.Type, nodeID))
+		} else {
+			b.WriteString(fmt.Sprintf("- `%s` --_%s_--> **`%s`** (`%s`)\n", nodeID, conn.Edge.Type, conn.Node.Name, conn.Node.Type))
+		}
+	}
+
 	return b.String()
 }
 

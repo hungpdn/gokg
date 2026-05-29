@@ -21,8 +21,10 @@ func (g *Graph) ExportJSON() (string, error) {
 	}
 
 	for _, edgeMap := range g.edges {
-		for _, edge := range edgeMap {
-			out.Edges = append(out.Edges, edge)
+		for _, edges := range edgeMap {
+			for _, edge := range edges {
+				out.Edges = append(out.Edges, edge)
+			}
 		}
 	}
 
@@ -58,10 +60,12 @@ func (g *Graph) ExportMermaid() string {
 	}
 
 	for _, edgeMap := range g.edges {
-		for _, edge := range edgeMap {
-			sFrom := safeID(edge.From)
-			sTo := safeID(edge.To)
-			b.WriteString(fmt.Sprintf("    %s -->|%s| %s\n", sFrom, edge.Type, sTo))
+		for _, edges := range edgeMap {
+			for _, edge := range edges {
+				sFrom := safeID(edge.From)
+				sTo := safeID(edge.To)
+				b.WriteString(fmt.Sprintf("    %s -->|%s| %s\n", sFrom, edge.Type, sTo))
+			}
 		}
 	}
 
@@ -86,8 +90,10 @@ func (g *Graph) ExportDot() string {
 	}
 
 	for _, edgeMap := range g.edges {
-		for _, edge := range edgeMap {
-			b.WriteString(fmt.Sprintf("  %s -> %s [label=\"%s\"];\n", safeID(edge.From), safeID(edge.To), edge.Type))
+		for _, edges := range edgeMap {
+			for _, edge := range edges {
+				b.WriteString(fmt.Sprintf("  %s -> %s [label=\"%s\"];\n", safeID(edge.From), safeID(edge.To), edge.Type))
+			}
 		}
 	}
 

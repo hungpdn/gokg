@@ -52,7 +52,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 6, "Should have 6 tools registered")
+	assert.Len(t, tools, 7, "Should have 7 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
@@ -62,6 +62,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, toolNames["get_implementations"])
 	assert.True(t, toolNames["get_source_code"])
 	assert.True(t, toolNames["find_path"])
+	assert.True(t, toolNames["get_concurrency_graph"])
 }
 
 func TestHandleCallToolError(t *testing.T) {
@@ -175,6 +176,42 @@ func TestHandleCallFindPath(t *testing.T) {
 	assert.Contains(t, text, "FuncA")
 	assert.Contains(t, text, "FuncC")
 	assert.Contains(t, text, "CALLS")
+}
+
+func TestHandleCallGetConcurrencyGraph(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+
+	funcA := &parser.Node{ID: "pkg.A", Type: parser.NodeTypeFunc, Name: "FuncA", PkgPath: "pkg"}
+	funcB := &parser.Node{ID: "pkg.B", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkg"}
+	gr := &parser.Node{ID: "pkg.A.goroutine_L12", Type: parser.NodeTypeGoroutine, Name: "goroutine_L12", PkgPath: "pkg"}
+	ch := &parser.Node{ID: "pkg.A.ch", Type: parser.NodeTypeChannel, Name: "ch (chan int)", PkgPath: "pkg"}
+	_, _ = g.AddNode(ctx, funcA)
+	_, _ = g.AddNode(ctx, funcB)
+	_, _ = g.AddNode(ctx, gr)
+	_, _ = g.AddNode(ctx, ch)
+	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.goroutine_L12", Type: parser.EdgeTypeSpawns})
+	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A.goroutine_L12", To: "pkg.B", Type: parser.EdgeTypeCalls})
+	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.ch", Type: parser.EdgeTypeSendsTo})
+
+	server := NewServer(g)
+
+	paramsRaw := []byte(`{"name": "get_concurrency_graph", "arguments": {"node_id": "pkg.A"}}`)
+	req := &Request{JSONRPC: "2.0", ID: 8, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	assert.Nil(t, res.Error)
+
+	resultMap := res.Result.(map[string]interface{})
+	content := resultMap["content"].([]map[string]interface{})
+	text := content[0]["text"].(string)
+
+	assert.Contains(t, text, "## Concurrency Graph of `pkg.A`")
+	assert.Contains(t, text, "goroutine_L12")
+	assert.Contains(t, text, "ch (chan int)")
+	assert.Contains(t, text, "SPAWNS")
+	assert.Contains(t, text, "SENDS_TO")
 }
 
 func TestHandleCallUnknownTool(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 	"sync"
@@ -12,6 +13,8 @@ import (
 )
 
 func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Package, mu *sync.Mutex, result *ParseResult) error {
+	createdChannels := make(map[string]bool)
+
 	for _, file := range pkg.Syntax {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -49,6 +52,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 		mu.Unlock()
 
 		var currentFunc string
+		goCalls := make(map[*ast.CallExpr]bool)
 
 		ast.Inspect(file, func(n ast.Node) bool {
 			if n == nil {
@@ -131,7 +135,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 				}
 
 			case *ast.CallExpr:
-				if currentFunc != "" {
+				if currentFunc != "" && !goCalls[node] {
 					// Identify the function being called
 					var calledObj types.Object
 					switch fun := node.Fun.(type) {
@@ -141,30 +145,40 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						calledObj = pkg.TypesInfo.Uses[fun.Sel]
 					}
 
-					if calledObj != nil {
-						if _, ok := calledObj.(*types.Func); ok {
-							var pkgPath string
-							if calledObj.Pkg() != nil {
-								pkgPath = calledObj.Pkg().Path()
-							}
-							calledID := BuildID(pkgPath, ".", calledObj.Name())
-
-							edge := NewEdge()
-							edge.From = currentFunc
-							edge.To = calledID
-							edge.Type = EdgeTypeCalls
-
-							mu.Lock()
-							result.Edges = append(result.Edges, edge)
-							mu.Unlock()
+					if _, ok := calledObj.(*types.Func); ok {
+						var pkgPath string
+						if calledObj.Pkg() != nil {
+							pkgPath = calledObj.Pkg().Path()
 						}
+						calledID := BuildID(pkgPath, ".", calledObj.Name())
+
+						edge := NewEdge()
+						edge.From = currentFunc
+						edge.To = calledID
+						edge.Type = EdgeTypeCalls
+
+						mu.Lock()
+						result.Edges = append(result.Edges, edge)
+						mu.Unlock()
 					}
 				}
 
 			case *ast.GoStmt:
 				if currentFunc != "" {
-					// Spawns relation
-					// Try to find the function being called in the go routine
+					line := pkg.Fset.Position(node.Pos()).Line
+					goroutineID := fmt.Sprintf("%s.goroutine_L%d", currentFunc, line)
+					goCalls[node.Call] = true
+
+					// Create GOROUTINE node
+					grNode := NewNode()
+					grNode.ID = goroutineID
+					grNode.Type = NodeTypeGoroutine
+					grNode.Name = fmt.Sprintf("goroutine_L%d", line)
+					grNode.PkgPath = pkg.PkgPath
+					grNode.FilePath = filename
+					grNode.Lines = [2]int{line, line}
+
+					// Determine what function the goroutine calls
 					var calledObj types.Object
 					switch fun := node.Call.Fun.(type) {
 					case *ast.Ident:
@@ -173,57 +187,61 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						calledObj = pkg.TypesInfo.Uses[fun.Sel]
 					}
 
-					calledID := "anonymous_func"
-					if calledObj != nil {
-						if _, ok := calledObj.(*types.Func); ok {
-							var pkgPath string
-							if calledObj.Pkg() != nil {
-								pkgPath = calledObj.Pkg().Path()
-							}
-							calledID = BuildID(pkgPath, ".", calledObj.Name())
-						}
-					} else {
-						// It might be an inline anonymous function, construct a unique ID
-						calledID = fmt.Sprintf("%s.anon_%d", currentFunc, pkg.Fset.Position(node.Pos()).Line)
-					}
-
-					edge := NewEdge()
-					edge.From = currentFunc
-					edge.To = calledID
-					edge.Type = EdgeTypeSpawns
-
 					mu.Lock()
-					result.Edges = append(result.Edges, edge)
+					result.Nodes = append(result.Nodes, grNode)
+
+					// currentFunc --SPAWNS--> goroutineNode
+					spawnEdge := NewEdge()
+					spawnEdge.From = currentFunc
+					spawnEdge.To = goroutineID
+					spawnEdge.Type = EdgeTypeSpawns
+					result.Edges = append(result.Edges, spawnEdge)
+
+					// goroutineNode --CALLS--> targetFunc
+					if _, ok := calledObj.(*types.Func); ok {
+						var pkgPath string
+						if calledObj.Pkg() != nil {
+							pkgPath = calledObj.Pkg().Path()
+						}
+						calledID := BuildID(pkgPath, ".", calledObj.Name())
+
+						callEdge := NewEdge()
+						callEdge.From = goroutineID
+						callEdge.To = calledID
+						callEdge.Type = EdgeTypeCalls
+						result.Edges = append(result.Edges, callEdge)
+					}
 					mu.Unlock()
 				}
 
 			case *ast.SendStmt:
 				if currentFunc != "" {
-					// SENDS_TO
-					edge := NewEdge()
-					edge.From = currentFunc
-					// To identify the channel properly, we'd look at TypesInfo.Types[node.Chan].Type
-					chanType := pkg.TypesInfo.TypeOf(node.Chan)
-					edge.To = chanType.String()
-					edge.Type = EdgeTypeSendsTo
+					chanNodeID := p.resolveChannelNode(pkg, node.Chan, currentFunc, filename, createdChannels, mu, result)
+					if chanNodeID != "" {
+						sendEdge := NewEdge()
+						sendEdge.From = currentFunc
+						sendEdge.To = chanNodeID
+						sendEdge.Type = EdgeTypeSendsTo
 
-					mu.Lock()
-					result.Edges = append(result.Edges, edge)
-					mu.Unlock()
+						mu.Lock()
+						result.Edges = append(result.Edges, sendEdge)
+						mu.Unlock()
+					}
 				}
 
 			case *ast.UnaryExpr:
-				if currentFunc != "" && node.Op.String() == "<-" {
-					// RECEIVES_FROM
-					edge := NewEdge()
-					edge.From = currentFunc
-					chanType := pkg.TypesInfo.TypeOf(node.X)
-					edge.To = chanType.String()
-					edge.Type = EdgeTypeReceivesFrom
+				if currentFunc != "" && node.Op == token.ARROW {
+					chanNodeID := p.resolveChannelNode(pkg, node.X, currentFunc, filename, createdChannels, mu, result)
+					if chanNodeID != "" {
+						recvEdge := NewEdge()
+						recvEdge.From = currentFunc
+						recvEdge.To = chanNodeID
+						recvEdge.Type = EdgeTypeReceivesFrom
 
-					mu.Lock()
-					result.Edges = append(result.Edges, edge)
-					mu.Unlock()
+						mu.Lock()
+						result.Edges = append(result.Edges, recvEdge)
+						mu.Unlock()
+					}
 				}
 			}
 
@@ -231,4 +249,73 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 		})
 	}
 	return nil
+}
+
+// resolveChannelNode extracts or creates a CHANNEL node from a channel expression.
+func (p *Parser) resolveChannelNode(
+	pkg *packages.Package,
+	chanExpr ast.Expr,
+	currentFunc string,
+	filename string,
+	created map[string]bool,
+	mu *sync.Mutex,
+	result *ParseResult,
+) string {
+	// Try to resolve the channel variable via TypesInfo
+	var chanName string
+	var chanObj types.Object
+
+	switch expr := chanExpr.(type) {
+	case *ast.Ident:
+		chanObj = pkg.TypesInfo.ObjectOf(expr)
+		if chanObj != nil {
+			chanName = chanObj.Name()
+		} else {
+			chanName = expr.Name
+		}
+	case *ast.SelectorExpr:
+		chanObj = pkg.TypesInfo.Uses[expr.Sel]
+		if chanObj != nil {
+			chanName = chanObj.Name()
+		} else {
+			chanName = expr.Sel.Name
+		}
+	case *ast.ParenExpr:
+		return p.resolveChannelNode(pkg, expr.X, currentFunc, filename, created, mu, result)
+	}
+
+	if chanName == "" {
+		return ""
+	}
+
+	chanType := pkg.TypesInfo.TypeOf(chanExpr)
+	if chanType == nil {
+		return ""
+	}
+	if _, ok := chanType.Underlying().(*types.Chan); !ok {
+		return ""
+	}
+
+	chanID := BuildID(currentFunc, ".", chanName)
+
+	// Determine the channel type string for the display name
+	chanTypeStr := chanType.String()
+
+	// Only create the node once
+	if !created[chanID] {
+		created[chanID] = true
+
+		chNode := NewNode()
+		chNode.ID = chanID
+		chNode.Type = NodeTypeChannel
+		chNode.Name = fmt.Sprintf("%s (%s)", chanName, chanTypeStr)
+		chNode.PkgPath = pkg.PkgPath
+		chNode.FilePath = filename
+
+		mu.Lock()
+		result.Nodes = append(result.Nodes, chNode)
+		mu.Unlock()
+	}
+
+	return chanID
 }

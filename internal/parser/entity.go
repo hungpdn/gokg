@@ -11,12 +11,14 @@ type NodeType string
 const (
 	NodeTypePackage   NodeType = "PACKAGE"
 	NodeTypeFile      NodeType = "FILE"
+	NodeTypeFolder    NodeType = "FOLDER"
 	NodeTypeStruct    NodeType = "STRUCT"
 	NodeTypeInterface NodeType = "INTERFACE"
 	NodeTypeFunc      NodeType = "FUNC"
 	NodeTypeMethod    NodeType = "METHOD"
 	NodeTypeVar       NodeType = "VAR"
 	NodeTypeChannel   NodeType = "CHANNEL"
+	NodeTypeGoroutine NodeType = "GOROUTINE"
 	NodeTypeBoundary  NodeType = "BOUNDARY" // External package/func
 )
 

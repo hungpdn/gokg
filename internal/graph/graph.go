@@ -18,7 +18,7 @@ type Graph struct {
 	directed   *simple.DirectedGraph
 	nodeMap    map[string]int64
 	nodes      map[int64]*parser.Node
-	edges      map[int64]map[int64]*parser.Edge
+	edges      map[int64]map[int64][]*parser.Edge
 	store      storage.Storage
 	nextNodeID int64
 }
@@ -29,7 +29,7 @@ func NewGraph(store storage.Storage) *Graph {
 		directed:   simple.NewDirectedGraph(),
 		nodeMap:    make(map[string]int64),
 		nodes:      make(map[int64]*parser.Node),
-		edges:      make(map[int64]map[int64]*parser.Edge),
+		edges:      make(map[int64]map[int64][]*parser.Edge),
 		store:      store,
 		nextNodeID: 0,
 	}
@@ -78,9 +78,14 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	}
 
 	if g.edges[fromID] == nil {
-		g.edges[fromID] = make(map[int64]*parser.Edge)
+		g.edges[fromID] = make(map[int64][]*parser.Edge)
 	}
-	g.edges[fromID][toID] = pEdge
+	for _, edge := range g.edges[fromID][toID] {
+		if edge.Type == pEdge.Type {
+			return nil
+		}
+	}
+	g.edges[fromID][toID] = append(g.edges[fromID][toID], pEdge)
 
 	gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
 	g.directed.SetEdge(gEdge)
@@ -187,10 +192,12 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 
 		// Remove all outbound edges from this node
 		if outEdges, ok := g.edges[id]; ok {
-			for _, edge := range outEdges {
-				if g.store != nil {
-					key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
-					_ = g.store.Delete(ctx, []byte(key))
+			for _, edges := range outEdges {
+				for _, edge := range edges {
+					if g.store != nil {
+						key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
+						_ = g.store.Delete(ctx, []byte(key))
+					}
 				}
 			}
 			delete(g.edges, id)
@@ -198,10 +205,12 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 
 		// Remove all inbound edges to this node
 		for _, outEdges := range g.edges {
-			if edge, ok := outEdges[id]; ok {
-				if g.store != nil {
-					key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
-					_ = g.store.Delete(ctx, []byte(key))
+			if edges, ok := outEdges[id]; ok {
+				for _, edge := range edges {
+					if g.store != nil {
+						key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
+						_ = g.store.Delete(ctx, []byte(key))
+					}
 				}
 				delete(outEdges, id)
 			}
