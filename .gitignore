@@ -4,3 +4,4 @@
 .env
 .gokg/
 bin/
+__debug*

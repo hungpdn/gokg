@@ -12,6 +12,8 @@ import (
 )
 
 func TestParseWorkspace(t *testing.T) {
+	withGoBuildCache(t)
+
 	// We can test the parser on the parser package itself
 	parser := NewParser("github.com/hungpdn/gokg")
 
@@ -47,6 +49,8 @@ func TestParseWorkspace(t *testing.T) {
 }
 
 func TestParseWorkspacePhase9Nodes(t *testing.T) {
+	withGoBuildCache(t)
+
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/phase9\n\ngo 1.25\n")
 	writeTestFile(t, filepath.Join(dir, "worker", "worker.go"), `package worker
@@ -109,6 +113,8 @@ func process(ch chan int) {
 }
 
 func TestParseWorkspaceContextCancel(t *testing.T) {
+	withGoBuildCache(t)
+
 	parser := NewParser("github.com/hungpdn/gokg")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,6 +129,12 @@ func writeTestFile(t *testing.T, path, contents string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
+}
+
+func withGoBuildCache(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("GOCACHE", filepath.Join(t.TempDir(), "gocache"))
 }
 
 func nodesByID(result *ParseResult) map[string]*Node {

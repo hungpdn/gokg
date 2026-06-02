@@ -2,9 +2,16 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
+)
+
+const (
+	badgerMemTableSize     int64 = 8 << 20
+	badgerValueLogFileSize int64 = 16 << 20
+	badgerValueThreshold   int64 = 1 << 20
 )
 
 type badgerStorage struct {
@@ -13,13 +20,22 @@ type badgerStorage struct {
 
 // NewBadgerStorage initializes a new BadgerDB instance at the given path.
 func NewBadgerStorage(path string) (Storage, error) {
-	opts := badger.DefaultOptions(path).WithLogger(nil) // Disable default logger for cleaner CLI output
+	opts := badgerOptions(path)
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db at %s: %w", path, err)
 	}
 
 	return &badgerStorage{db: db}, nil
+}
+
+func badgerOptions(path string) badger.Options {
+	opts := badger.DefaultOptions(path).
+		WithLogger(nil). // Disable default logger for cleaner CLI output
+		WithMemTableSize(badgerMemTableSize).
+		WithValueLogFileSize(badgerValueLogFileSize).
+		WithValueThreshold(badgerValueThreshold)
+	return opts
 }
 
 func (b *badgerStorage) Put(ctx context.Context, key []byte, value []byte) error {
@@ -93,6 +109,25 @@ func (b *badgerStorage) Delete(ctx context.Context, key []byte) error {
 		return fmt.Errorf("failed to delete key: %w", err)
 	}
 	return nil
+}
+
+func (b *badgerStorage) RunValueLogGC(ctx context.Context, discardRatio float64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for {
+		err := b.db.RunValueLogGC(discardRatio)
+		if err == nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			continue
+		}
+		if errors.Is(err, badger.ErrNoRewrite) {
+			return nil
+		}
+		return fmt.Errorf("failed to run badger value log GC: %w", err)
+	}
 }
 
 func (b *badgerStorage) Close() error {

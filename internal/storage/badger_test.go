@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,10 +9,7 @@ import (
 )
 
 func TestBadgerStorage(t *testing.T) {
-	// Create a temporary directory for the test database
-	dir, err := os.MkdirTemp("", "badger-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir) // clean up
+	dir := t.TempDir()
 
 	// Initialize the storage
 	store, err := NewBadgerStorage(dir)
@@ -37,12 +33,18 @@ func TestBadgerStorage(t *testing.T) {
 	val, err := store.Get(ctx, key)
 	assert.NoError(t, err)
 	assert.Equal(t, value, val)
+
+	// Test Delete
+	err = store.Delete(ctx, key)
+	assert.NoError(t, err)
+
+	_, err = store.Get(ctx, key)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
 }
 
 func TestBadgerStorageContextCancel(t *testing.T) {
-	dir, err := os.MkdirTemp("", "badger-test-cancel-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
@@ -59,9 +61,7 @@ func TestBadgerStorageContextCancel(t *testing.T) {
 }
 
 func TestBadgerStorageIterate(t *testing.T) {
-	dir, err := os.MkdirTemp("", "badger-test-iterate-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
@@ -80,4 +80,31 @@ func TestBadgerStorageIterate(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 3, count)
+}
+
+func TestBadgerStorageCompactOptions(t *testing.T) {
+	dir := t.TempDir()
+
+	opts := badgerOptions(dir)
+
+	assert.Equal(t, dir, opts.Dir)
+	assert.Equal(t, dir, opts.ValueDir)
+	assert.Nil(t, opts.Logger)
+	assert.Equal(t, badgerMemTableSize, opts.MemTableSize)
+	assert.Equal(t, badgerValueLogFileSize, opts.ValueLogFileSize)
+	assert.Equal(t, badgerValueThreshold, opts.ValueThreshold)
+}
+
+func TestBadgerStorageValueLogGCNoRewrite(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewBadgerStorage(dir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	gcStore, ok := store.(ValueLogGCer)
+	require.True(t, ok)
+
+	err = gcStore.RunValueLogGC(context.Background(), 0.5)
+	require.NoError(t, err)
 }

@@ -56,7 +56,7 @@ func (g *Graph) ExportMermaid() string {
 
 	for _, node := range g.nodes {
 		sid := safeID(node.ID)
-		b.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", sid, node.Name))
+		b.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", sid, nodeLabel(node.Name, string(node.Type))))
 	}
 
 	for _, edgeMap := range g.edges {
@@ -86,7 +86,7 @@ func (g *Graph) ExportDot() string {
 	}
 
 	for _, node := range g.nodes {
-		b.WriteString(fmt.Sprintf("  %s [label=\"%s\"];\n", safeID(node.ID), node.Name))
+		b.WriteString(fmt.Sprintf("  %s [label=\"%s\"];\n", safeID(node.ID), nodeLabel(node.Name, string(node.Type))))
 	}
 
 	for _, edgeMap := range g.edges {
@@ -99,4 +99,11 @@ func (g *Graph) ExportDot() string {
 
 	b.WriteString("}\n")
 	return b.String()
+}
+
+func nodeLabel(name, nodeType string) string {
+	if nodeType == "" {
+		return name
+	}
+	return fmt.Sprintf("%s:%s", name, nodeType)
 }

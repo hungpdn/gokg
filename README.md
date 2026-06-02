@@ -37,11 +37,20 @@ Navigate to your Go project and run the analyzer. This will parse the AST and bu
 ```bash
 cd /path/to/your/go/project
 gokg analyze
+
+# Rebuild the database from scratch when you want to discard stale data
+gokg analyze --db .gokg/ --rebuild
 ```
 
 *Options:*
 *   `--module`: Explicitly set your module prefix (defaults to reading from `go.mod`).
-*   `--db`: Set a custom path for the local database (default: `.gokg`).
+*   `--db`: Set a custom path for the local database (default: `.gokg/`).
+*   `--rebuild`: Delete the selected database directory before analysis and build a clean graph.
+*   `--gc`: Run Badger value-log garbage collection after analysis (default: `true`).
+
+GoKG uses compact BadgerDB defaults for local repositories, but Badger may still
+allocate files that are larger than the live graph data because of mmap and file
+preallocation.
 
 ### 2. Run the MCP Server for AI
 Once the graph is built, you can start the MCP Server. AI IDEs (like Cursor, Zed) or agents can connect to this process via standard input/output.

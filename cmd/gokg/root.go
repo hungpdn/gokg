@@ -4,6 +4,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const defaultDBPath = ".gokg/"
+
 var rootCmd = &cobra.Command{
 	Use:   "gokg",
 	Short: "Golang Knowledge Graph (gokg) is a local MCP server for Go semantic analysis",

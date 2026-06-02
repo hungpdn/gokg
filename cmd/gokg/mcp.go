@@ -72,7 +72,7 @@ var mcpCmd = &cobra.Command{
 }
 
 func init() {
-	mcpCmd.Flags().String("db", ".gokg/", "Path to BadgerDB directory")
+	mcpCmd.Flags().String("db", defaultDBPath, "Path to BadgerDB directory")
 	mcpCmd.Flags().Bool("watch", true, "Enable real-time incremental analysis on file change")
 	mcpCmd.Flags().String("module", "", "Module prefix for internal packages")
 }

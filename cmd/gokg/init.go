@@ -14,13 +14,13 @@ var initCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Initializing gokg workspace...")
 
-		store, err := storage.NewBadgerStorage(".gokg/")
+		store, err := storage.NewBadgerStorage(defaultDBPath)
 		if err != nil {
 			return fmt.Errorf("failed to initialize local storage: %w", err)
 		}
 		defer store.Close()
 
-		fmt.Println("gokg initialized successfully in .gokg/")
+		fmt.Printf("gokg initialized successfully in %s\n", defaultDBPath)
 		return nil
 	},
 }

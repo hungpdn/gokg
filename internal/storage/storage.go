@@ -19,3 +19,9 @@ type Storage interface {
 	// Close cleanly shuts down the database.
 	Close() error
 }
+
+// ValueLogGCer is implemented by storage backends that can compact stale value
+// log entries after heavy write/delete cycles.
+type ValueLogGCer interface {
+	RunValueLogGC(ctx context.Context, discardRatio float64) error
+}
