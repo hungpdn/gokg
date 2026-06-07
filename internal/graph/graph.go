@@ -82,6 +82,11 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 		return fmt.Errorf("edge references unknown nodes: %s -> %s", pEdge.From, pEdge.To)
 	}
 
+	// Skip self-edges: gonum's simple.DirectedGraph panics on them.
+	if fromID == toID {
+		return nil
+	}
+
 	if g.edges[fromID] == nil {
 		g.edges[fromID] = make(map[int64][]*parser.Edge)
 	}
