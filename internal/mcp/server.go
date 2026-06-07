@@ -62,8 +62,9 @@ func (s *Server) handleRequest(req *Request) *Response {
 	switch req.Method {
 	case "initialize":
 		return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
-			"capabilities": map[string]interface{}{"tools": map[string]interface{}{}},
-			"serverInfo":   map[string]string{"name": "gokg", "version": "0.2.0"},
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
+			"serverInfo":      map[string]string{"name": "gokg", "version": "0.2.0"},
 		}}
 	case "tools/list":
 		return s.handleToolsList(req)
