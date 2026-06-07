@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,6 +42,36 @@ func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.NoFileExists(t, staleFile)
 	assert.DirExists(t, dbDir)
+}
+
+func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
+	withGoBuildCache(t)
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	repoA := newTinyGoProjectWithModule(t, "example.com/service-a")
+	repoB := newTinyGoProjectWithModule(t, "example.com/service-b")
+
+	ws, err := workspace.Init("demo")
+	require.NoError(t, err)
+	require.NoError(t, ws.AddRepo("service-a", repoA))
+	require.NoError(t, ws.AddRepo("service-b", repoB))
+
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--workspace", "demo", "--rebuild", "--gc=false"})
+
+	require.NoError(t, cmd.Execute())
+	assert.DirExists(t, ws.GetRepoDBPath("service-a"))
+	assert.DirExists(t, ws.GetRepoDBPath("service-b"))
+
+	g, stores, err := loadWorkspaceGraph(context.Background(), "demo")
+	require.NoError(t, err)
+	defer closeStores(stores)
+
+	exported, err := g.ExportJSON()
+	require.NoError(t, err)
+	assert.Contains(t, exported, "repo:service-a")
+	assert.Contains(t, exported, "repo:service-b")
 }
 
 func TestValidateRebuildDBPath(t *testing.T) {
@@ -86,8 +118,14 @@ func TestRebuildBadgerDBPathRejectsFiles(t *testing.T) {
 func newTinyGoProject(t *testing.T) string {
 	t.Helper()
 
+	return newTinyGoProjectWithModule(t, "example.com/tiny")
+}
+
+func newTinyGoProjectWithModule(t *testing.T, modulePath string) string {
+	t.Helper()
+
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/tiny\n\ngo 1.25\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+modulePath+"\n\ngo 1.25\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644))
 	return dir
 }

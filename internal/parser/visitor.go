@@ -29,6 +29,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 		fileNode.Name = filename
 		fileNode.FilePath = filename
 		fileNode.PkgPath = pkg.PkgPath
+		fileNode.RepoID = p.RepoID
 
 		mu.Lock()
 		result.Nodes = append(result.Nodes, fileNode)
@@ -37,6 +38,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 		edge.From = pkg.PkgPath
 		edge.To = filename
 		edge.Type = EdgeTypeContains
+		edge.RepoID = p.RepoID
 		result.Edges = append(result.Edges, edge)
 
 		for _, imp := range file.Imports {
@@ -46,6 +48,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 				impEdge.From = filename
 				impEdge.To = importPath
 				impEdge.Type = EdgeTypeImports
+				impEdge.RepoID = p.RepoID
 				result.Edges = append(result.Edges, impEdge)
 			}
 		}
@@ -77,6 +80,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					start := pkg.Fset.Position(node.Pos()).Line
 					end := pkg.Fset.Position(node.End()).Line
 					tNode.Lines = [2]int{start, end}
+					tNode.RepoID = p.RepoID
 
 					if _, ok := node.Type.(*ast.StructType); ok {
 						tNode.Type = NodeTypeStruct
@@ -94,6 +98,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					containsEdge.From = filename
 					containsEdge.To = typeID
 					containsEdge.Type = EdgeTypeContains
+					containsEdge.RepoID = p.RepoID
 					result.Edges = append(result.Edges, containsEdge)
 					mu.Unlock()
 				}
@@ -120,6 +125,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					start := pkg.Fset.Position(node.Pos()).Line
 					end := pkg.Fset.Position(node.End()).Line
 					fnNode.Lines = [2]int{start, end}
+					fnNode.RepoID = p.RepoID
 
 					mu.Lock()
 					result.Nodes = append(result.Nodes, fnNode)
@@ -128,6 +134,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					containsEdge.From = filename
 					containsEdge.To = funcID
 					containsEdge.Type = EdgeTypeContains
+					containsEdge.RepoID = p.RepoID
 					result.Edges = append(result.Edges, containsEdge)
 					mu.Unlock()
 
@@ -156,6 +163,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						edge.From = currentFunc
 						edge.To = calledID
 						edge.Type = EdgeTypeCalls
+						edge.RepoID = p.RepoID
 
 						mu.Lock()
 						result.Edges = append(result.Edges, edge)
@@ -177,6 +185,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					grNode.PkgPath = pkg.PkgPath
 					grNode.FilePath = filename
 					grNode.Lines = [2]int{line, line}
+					grNode.RepoID = p.RepoID
 
 					// Determine what function the goroutine calls
 					var calledObj types.Object
@@ -195,6 +204,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					spawnEdge.From = currentFunc
 					spawnEdge.To = goroutineID
 					spawnEdge.Type = EdgeTypeSpawns
+					spawnEdge.RepoID = p.RepoID
 					result.Edges = append(result.Edges, spawnEdge)
 
 					// goroutineNode --CALLS--> targetFunc
@@ -209,6 +219,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						callEdge.From = goroutineID
 						callEdge.To = calledID
 						callEdge.Type = EdgeTypeCalls
+						callEdge.RepoID = p.RepoID
 						result.Edges = append(result.Edges, callEdge)
 					}
 					mu.Unlock()
@@ -222,6 +233,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						sendEdge.From = currentFunc
 						sendEdge.To = chanNodeID
 						sendEdge.Type = EdgeTypeSendsTo
+						sendEdge.RepoID = p.RepoID
 
 						mu.Lock()
 						result.Edges = append(result.Edges, sendEdge)
@@ -237,6 +249,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						recvEdge.From = currentFunc
 						recvEdge.To = chanNodeID
 						recvEdge.Type = EdgeTypeReceivesFrom
+						recvEdge.RepoID = p.RepoID
 
 						mu.Lock()
 						result.Edges = append(result.Edges, recvEdge)
@@ -311,6 +324,7 @@ func (p *Parser) resolveChannelNode(
 		chNode.Name = fmt.Sprintf("%s (%s)", chanName, chanTypeStr)
 		chNode.PkgPath = pkg.PkgPath
 		chNode.FilePath = filename
+		chNode.RepoID = p.RepoID
 
 		mu.Lock()
 		result.Nodes = append(result.Nodes, chNode)

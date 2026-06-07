@@ -15,7 +15,7 @@ func TestParseWorkspace(t *testing.T) {
 	withGoBuildCache(t)
 
 	// We can test the parser on the parser package itself
-	parser := NewParser("github.com/hungpdn/gokg")
+	parser := NewParser("github.com/hungpdn/gokg", "test-repo")
 
 	ctx := context.Background()
 	result, err := parser.ParseWorkspace(ctx, ".")
@@ -69,7 +69,7 @@ func process(ch chan int) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "worker", "testdata"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "vendor"), 0o755))
 
-	parser := NewParser("example.com/phase9")
+	parser := NewParser("example.com/phase9", "test-repo")
 	result, err := parser.ParseWorkspace(context.Background(), dir)
 	require.NoError(t, err)
 
@@ -112,10 +112,38 @@ func process(ch chan int) {
 	assert.False(t, hasEdge(result, startID, processID, EdgeTypeSpawns), "SPAWNS should target the goroutine node, not the callee")
 }
 
+func TestParseWorkspaceAddsWorkspaceRepoHierarchy(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/service-a\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+
+	parser := NewWorkspaceParser("example.com/service-a", "service-a", "demo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nodes := nodesByID(result)
+	workspaceID := WorkspaceNodeID("demo")
+	repoID := RepoNodeID("service-a")
+	rootFolderID := repoID + ":folder:."
+
+	require.NotNil(t, nodes[workspaceID])
+	assert.Equal(t, NodeTypeWorkspace, nodes[workspaceID].Type)
+	require.NotNil(t, nodes[repoID])
+	assert.Equal(t, NodeTypeRepo, nodes[repoID].Type)
+	require.NotNil(t, nodes[rootFolderID])
+	assert.Equal(t, NodeTypeFolder, nodes[rootFolderID].Type)
+
+	assert.True(t, hasEdge(result, workspaceID, repoID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, repoID, rootFolderID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, rootFolderID, "example.com/service-a", EdgeTypeContains))
+}
+
 func TestParseWorkspaceContextCancel(t *testing.T) {
 	withGoBuildCache(t)
 
-	parser := NewParser("github.com/hungpdn/gokg")
+	parser := NewParser("github.com/hungpdn/gokg", "test-repo")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately

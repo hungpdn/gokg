@@ -20,10 +20,16 @@ type ParseResult struct {
 
 type Parser struct {
 	ModulePrefix string
+	RepoID       string
+	WorkspaceID  string
 }
 
-func NewParser(modulePrefix string) *Parser {
-	return &Parser{ModulePrefix: modulePrefix}
+func NewParser(modulePrefix, repoID string) *Parser {
+	return &Parser{ModulePrefix: modulePrefix, RepoID: repoID}
+}
+
+func NewWorkspaceParser(modulePrefix, repoID, workspaceID string) *Parser {
+	return &Parser{ModulePrefix: modulePrefix, RepoID: repoID, WorkspaceID: workspaceID}
 }
 
 // ParseWorkspace loads and parses the Go codebase in the given directory.
@@ -48,6 +54,8 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 		Edges: make([]*Edge, 0),
 	}
 
+	p.addWorkspaceHierarchy(result)
+
 	if err := p.buildFolderHierarchy(ctx, dir, pkgs, result); err != nil {
 		return nil, err
 	}
@@ -68,6 +76,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 			node.ID = pkg.PkgPath
 			node.Name = pkg.Name
 			node.PkgPath = pkg.PkgPath
+			node.RepoID = p.RepoID
 
 			if !isInternal {
 				node.Type = NodeTypeBoundary
@@ -143,6 +152,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 				edge.From = s.id
 				edge.To = i.id
 				edge.Type = EdgeTypeImplements
+				edge.RepoID = p.RepoID
 				result.Edges = append(result.Edges, edge)
 			}
 		}
@@ -180,7 +190,7 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 		}
 		rel = filepath.ToSlash(rel)
 
-		id := folderNodeID(rel)
+		id := p.folderNodeID(rel)
 		if !folderIDs[id] {
 			folderIDs[id] = true
 
@@ -192,15 +202,17 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 				node.Name = "/"
 			}
 			node.FilePath = path
+			node.RepoID = p.RepoID
 			result.Nodes = append(result.Nodes, node)
 		}
 
 		if rel != "." {
 			parentRel := filepath.ToSlash(filepath.Dir(rel))
 			edge := NewEdge()
-			edge.From = folderNodeID(parentRel)
+			edge.From = p.folderNodeID(parentRel)
 			edge.To = id
 			edge.Type = EdgeTypeContains
+			edge.RepoID = p.RepoID
 			result.Edges = append(result.Edges, edge)
 		}
 
@@ -216,6 +228,7 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 			edge.From = folderID
 			edge.To = pkgPath
 			edge.Type = EdgeTypeContains
+			edge.RepoID = p.RepoID
 			result.Edges = append(result.Edges, edge)
 		}
 	}
@@ -256,7 +269,7 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 				continue
 			}
 
-			folderID := folderNodeID(filepath.ToSlash(relDir))
+			folderID := p.folderNodeID(filepath.ToSlash(relDir))
 			if packageFolders[folderID] == nil {
 				packageFolders[folderID] = make(map[string]bool)
 			}
@@ -269,6 +282,55 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 
 func shouldSkipFolder(name string) bool {
 	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
+}
+
+func WorkspaceNodeID(workspaceID string) string {
+	return BuildID("workspace:", workspaceID)
+}
+
+func RepoNodeID(repoID string) string {
+	return BuildID("repo:", repoID)
+}
+
+func (p *Parser) addWorkspaceHierarchy(result *ParseResult) {
+	if p.WorkspaceID == "" || p.RepoID == "" {
+		return
+	}
+
+	workspaceID := WorkspaceNodeID(p.WorkspaceID)
+	repoID := RepoNodeID(p.RepoID)
+
+	result.Nodes = append(result.Nodes, &Node{
+		ID:   workspaceID,
+		Type: NodeTypeWorkspace,
+		Name: p.WorkspaceID,
+	})
+	result.Nodes = append(result.Nodes, &Node{
+		ID:     repoID,
+		Type:   NodeTypeRepo,
+		Name:   p.RepoID,
+		RepoID: p.RepoID,
+	})
+	result.Edges = append(result.Edges, &Edge{
+		From:   workspaceID,
+		To:     repoID,
+		Type:   EdgeTypeContains,
+		RepoID: p.RepoID,
+	})
+	result.Edges = append(result.Edges, &Edge{
+		From:   repoID,
+		To:     p.folderNodeID("."),
+		Type:   EdgeTypeContains,
+		RepoID: p.RepoID,
+	})
+}
+
+func (p *Parser) folderNodeID(rel string) string {
+	id := folderNodeID(rel)
+	if p.WorkspaceID == "" || p.RepoID == "" {
+		return id
+	}
+	return BuildID(RepoNodeID(p.RepoID), ":", id)
 }
 
 func folderNodeID(rel string) string {
@@ -318,6 +380,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 		node.ID = pkg.PkgPath
 		node.Name = pkg.Name
 		node.PkgPath = pkg.PkgPath
+		node.RepoID = p.RepoID
 
 		if !isInternal {
 			node.Type = NodeTypeBoundary
@@ -379,6 +442,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 				edge.From = s.id
 				edge.To = i.id
 				edge.Type = EdgeTypeImplements
+				edge.RepoID = p.RepoID
 				result.Edges = append(result.Edges, edge)
 			}
 		}

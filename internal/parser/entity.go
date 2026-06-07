@@ -20,9 +20,10 @@ const (
 	NodeTypeChannel   NodeType = "CHANNEL"
 	NodeTypeGoroutine NodeType = "GOROUTINE"
 	NodeTypeBoundary  NodeType = "BOUNDARY" // External package/func
+	NodeTypeRepo      NodeType = "REPO"
+	NodeTypeWorkspace NodeType = "WORKSPACE"
 )
 
-// Node represents an entity in the Go codebase
 type Node struct {
 	ID       string // Unique identifier (e.g. fully qualified name or path)
 	Type     NodeType
@@ -30,6 +31,7 @@ type Node struct {
 	PkgPath  string
 	FilePath string
 	Lines    [2]int // Start, End line
+	RepoID   string // The ID of the repository this node belongs to
 }
 
 // EdgeType defines the relation between two nodes
@@ -47,9 +49,10 @@ const (
 
 // Edge represents a relation between two nodes
 type Edge struct {
-	From string
-	To   string
-	Type EdgeType
+	From   string
+	To     string
+	Type   EdgeType
+	RepoID string // The ID of the repository that discovered this edge
 }
 
 // Memory Optimization: Object pools for Node and Edge

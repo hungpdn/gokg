@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hungpdn/gokg/internal/parser"
+	"github.com/hungpdn/gokg/internal/storage"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,6 +90,67 @@ func TestConcurrencyGraphIncludesGoroutinesAndChannels(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, hasConcurrencyConnection(fromB, "funcA.goroutine_L10", parser.EdgeTypeCalls, "inbound"))
 	assert.True(t, hasConcurrencyConnection(fromB, "funcB.ch", parser.EdgeTypeReceivesFrom, "outbound"))
+}
+
+func TestBuildFromParseResultsMergesCrossRepoEdges(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	repoA := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "service-a/main.go", Type: parser.NodeTypeFile, Name: "main.go", RepoID: "service-a"},
+		},
+		Edges: []*parser.Edge{
+			{From: "service-a/main.go", To: "example.com/service-b", Type: parser.EdgeTypeImports, RepoID: "service-a"},
+		},
+	}
+	repoB := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "example.com/service-b", Type: parser.NodeTypePackage, Name: "serviceb", PkgPath: "example.com/service-b", RepoID: "service-b"},
+		},
+	}
+
+	require.NoError(t, g.BuildFromParseResults(ctx, repoA, repoB))
+
+	deps, err := g.Query().GetDependencies("service-a/main.go")
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Equal(t, "example.com/service-b", deps[0].ID)
+}
+
+func TestLoadFromStoragesResolvesPersistedCrossRepoEdges(t *testing.T) {
+	ctx := context.Background()
+	storeA, err := storage.NewBadgerStorage(t.TempDir())
+	require.NoError(t, err)
+	defer storeA.Close()
+	storeB, err := storage.NewBadgerStorage(t.TempDir())
+	require.NoError(t, err)
+	defer storeB.Close()
+
+	repoA := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "example.com/service-a.Main", Type: parser.NodeTypeFunc, Name: "Main", RepoID: "service-a"},
+		},
+		Edges: []*parser.Edge{
+			{From: "example.com/service-a.Main", To: "example.com/service-b.Handle", Type: parser.EdgeTypeCalls, RepoID: "service-a"},
+		},
+	}
+	repoB := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "example.com/service-b.Handle", Type: parser.NodeTypeFunc, Name: "Handle", RepoID: "service-b"},
+		},
+	}
+
+	require.NoError(t, NewGraph(storeA).BuildFromParseResult(ctx, repoA))
+	require.NoError(t, NewGraph(storeB).BuildFromParseResult(ctx, repoB))
+
+	merged := NewGraph(nil)
+	require.NoError(t, merged.LoadFromStorages(ctx, storeA, storeB))
+
+	deps, err := merged.Query().GetDependencies("example.com/service-a.Main")
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Equal(t, "example.com/service-b.Handle", deps[0].ID)
 }
 
 func hasConcurrencyConnection(connections []ConcurrencyConnection, nodeID string, edgeType parser.EdgeType, direction string) bool {

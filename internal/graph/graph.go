@@ -41,6 +41,10 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 	defer g.mu.Unlock()
 
 	if id, exists := g.nodeMap[pNode.ID]; exists {
+		if shouldReplaceNode(g.nodes[id], pNode) {
+			g.nodes[id] = pNode
+			g.persistNode(ctx, pNode)
+		}
 		return id, nil // Already exists
 	}
 
@@ -54,13 +58,7 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 	gNode := simple.Node(id)
 	g.directed.AddNode(gNode)
 
-	// Persist to storage
-	if g.store != nil {
-		data, err := json.Marshal(pNode)
-		if err == nil {
-			_ = g.store.Put(ctx, []byte("node:"+pNode.ID), data)
-		}
-	}
+	g.persistNode(ctx, pNode)
 
 	return id, nil
 }
@@ -90,40 +88,92 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
 	g.directed.SetEdge(gEdge)
 
-	// Persist to storage
-	if g.store != nil {
-		data, err := json.Marshal(pEdge)
-		if err == nil {
-			key := fmt.Sprintf("edge:%s:%s:%s", pEdge.From, pEdge.To, pEdge.Type)
-			_ = g.store.Put(ctx, []byte(key), data)
-		}
-	}
+	g.persistEdge(ctx, pEdge)
 
 	return nil
 }
 
 // BuildFromParseResult builds the graph from the parse result
 func (g *Graph) BuildFromParseResult(ctx context.Context, result *parser.ParseResult) error {
-	for _, node := range result.Nodes {
-		if _, err := g.AddNode(ctx, node); err != nil {
-			return err
+	return g.BuildFromParseResults(ctx, result)
+}
+
+// BuildFromParseResults merges one or more parse results into the graph.
+func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.ParseResult) error {
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		for _, node := range result.Nodes {
+			if _, err := g.AddNode(ctx, node); err != nil {
+				return err
+			}
 		}
 	}
 
-	for _, edge := range result.Edges {
-		if err := g.AddEdge(ctx, edge); err != nil {
-			// Some edges might point to unresolved boundary nodes, just ignore or log
+	for _, result := range results {
+		if result == nil {
 			continue
+		}
+		for _, edge := range result.Edges {
+			if err := g.AddEdge(ctx, edge); err != nil {
+				// Keep unresolved edges in storage so multi-DB loads can resolve
+				// them after all repos contribute their nodes.
+				g.persistEdge(ctx, edge)
+				continue
+			}
 		}
 	}
 
 	return nil
 }
 
+func (g *Graph) persistNode(ctx context.Context, pNode *parser.Node) {
+	if g.store == nil {
+		return
+	}
+	data, err := json.Marshal(pNode)
+	if err == nil {
+		_ = g.store.Put(ctx, []byte("node:"+pNode.ID), data)
+	}
+}
+
+func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) {
+	if g.store == nil {
+		return
+	}
+	data, err := json.Marshal(pEdge)
+	if err == nil {
+		key := fmt.Sprintf("edge:%s:%s:%s", pEdge.From, pEdge.To, pEdge.Type)
+		_ = g.store.Put(ctx, []byte(key), data)
+	}
+}
+
+func shouldReplaceNode(existing, candidate *parser.Node) bool {
+	if existing == nil || candidate == nil {
+		return false
+	}
+	return existing.Type == parser.NodeTypeBoundary && candidate.Type != parser.NodeTypeBoundary
+}
+
 // LoadFromStorage reads the graph from the local storage.
 func (g *Graph) LoadFromStorage(ctx context.Context) error {
 	if g.store == nil {
 		return fmt.Errorf("no storage backend available")
+	}
+	return g.LoadFromStorages(ctx, g.store)
+}
+
+// LoadFromStorages reads and merges graph data from multiple storage backends.
+func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage) error {
+	if len(stores) == 0 {
+		return fmt.Errorf("no storage backends available")
+	}
+
+	for _, store := range stores {
+		if store == nil {
+			return fmt.Errorf("nil storage backend")
+		}
 	}
 
 	var edgesData [][]byte
@@ -133,23 +183,25 @@ func (g *Graph) LoadFromStorage(ctx context.Context) error {
 	g.store = nil
 	defer func() { g.store = store }()
 
-	err := store.Iterate(ctx, func(key []byte, value []byte) error {
-		keyStr := string(key)
-		if strings.HasPrefix(keyStr, "node:") {
-			var pNode parser.Node
-			if err := json.Unmarshal(value, &pNode); err != nil {
-				return err
+	for _, store := range stores {
+		err := store.Iterate(ctx, func(key []byte, value []byte) error {
+			keyStr := string(key)
+			if strings.HasPrefix(keyStr, "node:") {
+				var pNode parser.Node
+				if err := json.Unmarshal(value, &pNode); err != nil {
+					return err
+				}
+				_, _ = g.AddNode(ctx, &pNode)
+			} else if strings.HasPrefix(keyStr, "edge:") {
+				// Copy the value as Badger reuses the slice
+				edgesData = append(edgesData, append([]byte(nil), value...))
 			}
-			_, _ = g.AddNode(ctx, &pNode)
-		} else if strings.HasPrefix(keyStr, "edge:") {
-			// Copy the value as Badger reuses the slice
-			edgesData = append(edgesData, append([]byte(nil), value...))
-		}
-		return nil
-	})
+			return nil
+		})
 
-	if err != nil {
-		return fmt.Errorf("failed to iterate storage: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to iterate storage: %w", err)
+		}
 	}
 
 	for _, data := range edgesData {

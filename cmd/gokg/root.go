@@ -7,8 +7,10 @@ import (
 const defaultDBPath = ".gokg/"
 
 var rootCmd = &cobra.Command{
-	Use:   "gokg",
-	Short: "Golang Knowledge Graph (gokg) is a local MCP server for Go semantic analysis",
+	Use:           "gokg",
+	Short:         "Golang Knowledge Graph (gokg) is a local MCP server for Go semantic analysis",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Long: `gokg (Golang Knowledge Graph) transforms Go source code into a Semantic Knowledge Graph.
 It acts as a Local MCP Server providing ultra-deep Go architectural context to AI Coding Agents.
 It performs deep indexing of internal packages, boundary nodes, and concurrency flows (Goroutines, Channels).`,
@@ -20,4 +22,5 @@ func init() {
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(exportCmd)
+	rootCmd.AddCommand(workspaceCmd)
 }

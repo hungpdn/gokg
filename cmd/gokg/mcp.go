@@ -25,6 +25,7 @@ var mcpCmd = &cobra.Command{
 		dbPath, _ := cmd.Flags().GetString("db")
 		enableWatch, _ := cmd.Flags().GetBool("watch")
 		modulePrefix, _ := cmd.Flags().GetString("module")
+		workspaceName, _ := cmd.Flags().GetString("workspace")
 
 		// Detect module automatically if not provided
 		if modulePrefix == "" {
@@ -40,6 +41,25 @@ var mcpCmd = &cobra.Command{
 			}
 		}
 
+		if workspaceName != "" {
+			if cmd.Flags().Changed("db") {
+				return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
+			}
+
+			g, stores, err := loadWorkspaceGraph(ctx, workspaceName)
+			if err != nil {
+				return err
+			}
+			defer closeStores(stores)
+
+			if enableWatch {
+				log.Printf("Warning: workspace MCP currently loads a static merged graph; file watching is disabled for workspace %q", workspaceName)
+			}
+
+			server := mcp.NewServer(g)
+			return server.Start(ctx)
+		}
+
 		// Init Storage
 		store, err := storage.NewBadgerStorage(dbPath)
 		if err != nil {
@@ -53,7 +73,7 @@ var mcpCmd = &cobra.Command{
 		}
 
 		if enableWatch {
-			p := parser.NewParser(modulePrefix)
+			p := parser.NewParser(modulePrefix, modulePrefix)
 			w, err := watcher.NewWatcher(g, p, ".")
 			if err != nil {
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
@@ -73,6 +93,7 @@ var mcpCmd = &cobra.Command{
 
 func init() {
 	mcpCmd.Flags().String("db", defaultDBPath, "Path to BadgerDB directory")
+	mcpCmd.Flags().String("workspace", "", "Workspace name to serve by merging per-repo databases")
 	mcpCmd.Flags().Bool("watch", true, "Enable real-time incremental analysis on file change")
 	mcpCmd.Flags().String("module", "", "Module prefix for internal packages")
 }

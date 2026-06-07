@@ -17,18 +17,36 @@ var exportCmd = &cobra.Command{
 		dbPath, _ := cmd.Flags().GetString("db")
 		format, _ := cmd.Flags().GetString("format")
 		outFile, _ := cmd.Flags().GetString("out")
-
-		fmt.Printf("Loading graph from %s...\n", dbPath)
-		store, err := storage.NewBadgerStorage(dbPath)
-		if err != nil {
-			return fmt.Errorf("failed to open storage: %w", err)
-		}
-		defer store.Close()
+		workspaceName, _ := cmd.Flags().GetString("workspace")
 
 		ctx := context.Background()
-		g := graph.NewGraph(store)
-		if err := g.LoadFromStorage(ctx); err != nil {
-			return fmt.Errorf("failed to load graph: %w", err)
+		var g *graph.Graph
+		var err error
+
+		if workspaceName != "" {
+			if cmd.Flags().Changed("db") {
+				return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
+			}
+
+			fmt.Printf("Loading workspace graph from %q...\n", workspaceName)
+			var stores []storage.Storage
+			g, stores, err = loadWorkspaceGraph(ctx, workspaceName)
+			if err != nil {
+				return err
+			}
+			defer closeStores(stores)
+		} else {
+			fmt.Printf("Loading graph from %s...\n", dbPath)
+			store, err := storage.NewBadgerStorage(dbPath)
+			if err != nil {
+				return fmt.Errorf("failed to open storage: %w", err)
+			}
+			defer store.Close()
+
+			g = graph.NewGraph(store)
+			if err := g.LoadFromStorage(ctx); err != nil {
+				return fmt.Errorf("failed to load graph: %w", err)
+			}
 		}
 
 		var output string
@@ -62,6 +80,7 @@ var exportCmd = &cobra.Command{
 
 func init() {
 	exportCmd.Flags().String("db", defaultDBPath, "Path to BadgerDB directory")
+	exportCmd.Flags().String("workspace", "", "Workspace name to export by merging per-repo databases")
 	exportCmd.Flags().String("format", "json", "Output format (json, mermaid, dot)")
 	exportCmd.Flags().String("out", "", "Output file path (leave empty for stdout)")
 }
