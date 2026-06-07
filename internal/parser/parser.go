@@ -107,56 +107,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	}
 
 	// Post-processing: IMPLEMENTS edges
-	type structInfo struct {
-		id string
-		t  types.Type
-	}
-	type ifaceInfo struct {
-		id string
-		t  *types.Interface
-	}
-	var structs []structInfo
-	var ifaces []ifaceInfo
-
-	for _, pkg := range pkgs {
-		for _, obj := range pkg.TypesInfo.Defs {
-			if obj == nil {
-				continue
-			}
-			if typeName, ok := obj.(*types.TypeName); ok {
-				if named, ok := typeName.Type().(*types.Named); ok {
-					var pkgPath string
-					if obj.Pkg() != nil {
-						pkgPath = obj.Pkg().Path()
-					}
-					id := BuildID(pkgPath, ".", obj.Name())
-
-					if _, ok := named.Underlying().(*types.Struct); ok {
-						structs = append(structs, structInfo{id: id, t: named})
-						structs = append(structs, structInfo{id: id, t: types.NewPointer(named)})
-					} else if iType, ok := named.Underlying().(*types.Interface); ok {
-						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
-					}
-				}
-			}
-		}
-	}
-
-	for _, s := range structs {
-		for _, i := range ifaces {
-			if i.t.Empty() {
-				continue // Skip empty interface "any" or "interface{}"
-			}
-			if types.Implements(s.t, i.t) {
-				edge := NewEdge()
-				edge.From = s.id
-				edge.To = i.id
-				edge.Type = EdgeTypeImplements
-				edge.RepoID = p.RepoID
-				result.Edges = append(result.Edges, edge)
-			}
-		}
-	}
+	p.resolveImplementsEdges(pkgs, result)
 
 	return result, nil
 }
@@ -397,23 +348,44 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 	}
 
 	// Post-processing: IMPLEMENTS edges
-	type structInfo struct {
-		id string
-		t  types.Type
-	}
-	type ifaceInfo struct {
-		id string
-		t  *types.Interface
-	}
+	p.resolveImplementsEdges(pkgs, result)
+
+	return result, nil
+}
+
+type structInfo struct {
+	id string
+	t  types.Type
+}
+
+type ifaceInfo struct {
+	id string
+	t  *types.Interface
+}
+
+func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseResult) {
 	var structs []structInfo
 	var ifaces []ifaceInfo
+	visited := make(map[string]bool)
 
-	for _, pkg := range pkgs {
-		for _, obj := range pkg.TypesInfo.Defs {
+	var collect func(pkg *packages.Package)
+	collect = func(pkg *packages.Package) {
+		if pkg == nil || pkg.Types == nil || visited[pkg.PkgPath] {
+			return
+		}
+		visited[pkg.PkgPath] = true
+
+		isWorkspacePkg := strings.HasPrefix(pkg.PkgPath, p.ModulePrefix)
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
 			if obj == nil {
 				continue
 			}
 			if typeName, ok := obj.(*types.TypeName); ok {
+				if typeName.IsAlias() {
+					continue
+				}
 				if named, ok := typeName.Type().(*types.Named); ok {
 					var pkgPath string
 					if obj.Pkg() != nil {
@@ -421,15 +393,23 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 					}
 					id := BuildID(pkgPath, ".", obj.Name())
 
-					if _, ok := named.Underlying().(*types.Struct); ok {
+					if iType, ok := named.Underlying().(*types.Interface); ok {
+						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
+					} else if isWorkspacePkg {
 						structs = append(structs, structInfo{id: id, t: named})
 						structs = append(structs, structInfo{id: id, t: types.NewPointer(named)})
-					} else if iType, ok := named.Underlying().(*types.Interface); ok {
-						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
 					}
 				}
 			}
 		}
+
+		for _, imp := range pkg.Imports {
+			collect(imp)
+		}
+	}
+
+	for _, pkg := range pkgs {
+		collect(pkg)
 	}
 
 	for _, s := range structs {
@@ -447,6 +427,4 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 			}
 		}
 	}
-
-	return result, nil
 }

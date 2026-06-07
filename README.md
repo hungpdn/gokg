@@ -76,6 +76,7 @@ When connected to an AI agent, GoKG exposes the following tools (via RAG and gra
 *   `get_dependencies`: Returns all nodes that a given function calls or imports.
 *   `get_blast_radius`: Returns all functions/files that depend on a given node (Reverse dependency).
 *   `get_concurrency_flow`: Traces goroutines and channel data flows.
+*   `get_concurrency_graph`: Returns goroutine and channel topology connected to a function, formatted as Markdown.
 *   `get_implementations`: Finds all Structs implementing a given Interface.
 *   `get_source_code`: Reads the raw Go source code of a specific node from disk.
 *   `find_path`: Finds the shortest call path (BFS) between two nodes.

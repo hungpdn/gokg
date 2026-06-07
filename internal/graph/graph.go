@@ -41,7 +41,13 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 	defer g.mu.Unlock()
 
 	if id, exists := g.nodeMap[pNode.ID]; exists {
-		if shouldReplaceNode(g.nodes[id], pNode) {
+		if g.nodes[id] == nil {
+			g.nodes[id] = pNode
+			gNode := simple.Node(id)
+			g.directed.AddNode(gNode)
+			g.persistNode(ctx, pNode)
+			g.restoreInboundEdges(id)
+		} else if shouldReplaceNode(g.nodes[id], pNode) {
 			g.nodes[id] = pNode
 			g.persistNode(ctx, pNode)
 		}
@@ -59,6 +65,7 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 	g.directed.AddNode(gNode)
 
 	g.persistNode(ctx, pNode)
+	g.restoreInboundEdges(id)
 
 	return id, nil
 }
@@ -233,8 +240,7 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 		// Remove from Gonum graph
 		g.directed.RemoveNode(id)
 
-		// Remove from internal maps
-		delete(g.nodeMap, node.ID)
+		// Remove from internal maps (keep in nodeMap to maintain ID stability)
 		delete(g.nodes, id)
 
 		// Remove from BadgerDB
@@ -254,20 +260,23 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 			}
 			delete(g.edges, id)
 		}
-
-		// Remove all inbound edges to this node
-		for _, outEdges := range g.edges {
-			if edges, ok := outEdges[id]; ok {
-				for _, edge := range edges {
-					if g.store != nil {
-						key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
-						_ = g.store.Delete(ctx, []byte(key))
-					}
-				}
-				delete(outEdges, id)
-			}
-		}
 	}
 
 	return nil
+}
+
+// restoreInboundEdges restores all edges from other packages/nodes pointing to the given node.
+func (g *Graph) restoreInboundEdges(id int64) {
+	if g.nodes[id] == nil {
+		return
+	}
+	for fromID, outEdges := range g.edges {
+		if g.nodes[fromID] == nil {
+			continue
+		}
+		if _, exists := outEdges[id]; exists {
+			gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(id)}
+			g.directed.SetEdge(gEdge)
+		}
+	}
 }

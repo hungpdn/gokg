@@ -153,6 +153,56 @@ func TestLoadFromStoragesResolvesPersistedCrossRepoEdges(t *testing.T) {
 	assert.Equal(t, "example.com/service-b.Handle", deps[0].ID)
 }
 
+func TestIncrementalWatcherInboundEdgePreservation(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	// Phase 1: Initial load
+	pkgA := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkgA", Type: parser.NodeTypePackage, Name: "pkgA", PkgPath: "pkgA"},
+			{ID: "pkgA.FuncA", Type: parser.NodeTypeFunc, Name: "FuncA", PkgPath: "pkgA"},
+		},
+		Edges: []*parser.Edge{
+			{From: "pkgA.FuncA", To: "pkgB.FuncB", Type: parser.EdgeTypeCalls},
+		},
+	}
+	pkgB := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkgB", Type: parser.NodeTypePackage, Name: "pkgB", PkgPath: "pkgB"},
+			{ID: "pkgB.FuncB", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkgB"},
+		},
+	}
+
+	require.NoError(t, g.BuildFromParseResults(ctx, pkgA, pkgB))
+
+	// Verify the inbound edge exists initial
+	deps, err := g.Query().GetDependencies("pkgA.FuncA")
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Equal(t, "pkgB.FuncB", deps[0].ID)
+
+	// Phase 2: Simulating incremental update on Package B
+	require.NoError(t, g.RemovePackage(ctx, "pkgB"))
+
+	// 2. Watcher parses pkgB again
+	pkgBUpdated := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkgB", Type: parser.NodeTypePackage, Name: "pkgB", PkgPath: "pkgB"},
+			{ID: "pkgB.FuncB", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkgB"},
+		},
+	}
+
+	// 3. Watcher adds new parse results to graph
+	require.NoError(t, g.BuildFromParseResult(ctx, pkgBUpdated))
+
+	// Verify the inbound edge from pkgA to pkgB is STILL PRESERVED!
+	deps, err = g.Query().GetDependencies("pkgA.FuncA")
+	require.NoError(t, err)
+	require.Len(t, deps, 1, "Inbound edge from pkgA to pkgB should be preserved after pkgB incremental update")
+	assert.Equal(t, "pkgB.FuncB", deps[0].ID)
+}
+
 func hasConcurrencyConnection(connections []ConcurrencyConnection, nodeID string, edgeType parser.EdgeType, direction string) bool {
 	for _, conn := range connections {
 		if conn.Node != nil && conn.Edge != nil &&

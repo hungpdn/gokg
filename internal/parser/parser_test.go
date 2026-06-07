@@ -153,6 +153,60 @@ func TestParseWorkspaceContextCancel(t *testing.T) {
 	assert.Contains(t, err.Error(), context.Canceled.Error())
 }
 
+func TestParseMethodCallsAndImplements(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+type MyInterface interface {
+	DoSomething()
+}
+
+type MyStruct struct{}
+
+func (s *MyStruct) DoSomething() {}
+
+type MyFunc func()
+func (f MyFunc) DoSomething() {}
+
+func main() {
+	var s MyStruct
+	s.DoSomething()
+
+	var f MyFunc = func() {}
+	f.DoSomething()
+}
+`)
+
+	parser := NewParser("example.com/test", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nodes := nodesByID(result)
+
+	// Verify method nodes
+	structMethodID := "example.com/test.*example.com/test.MyStruct.DoSomething"
+	funcMethodID := "example.com/test.example.com/test.MyFunc.DoSomething"
+
+	require.NotNil(t, nodes[structMethodID], "Struct method should be parsed")
+	require.NotNil(t, nodes[funcMethodID], "Custom func method should be parsed")
+
+	// Verify IMPLEMENTS edges
+	interfaceID := "example.com/test.MyInterface"
+	structID := "example.com/test.MyStruct"
+	funcTypeID := "example.com/test.MyFunc"
+
+	assert.True(t, hasEdge(result, structID, interfaceID, EdgeTypeImplements), "MyStruct implements MyInterface")
+	assert.True(t, hasEdge(result, funcTypeID, interfaceID, EdgeTypeImplements), "MyFunc implements MyInterface")
+
+	// Verify CALLS edges
+	mainID := "example.com/test.main"
+	assert.True(t, hasEdge(result, mainID, structMethodID, EdgeTypeCalls), "main calls struct method")
+	assert.True(t, hasEdge(result, mainID, funcMethodID, EdgeTypeCalls), "main calls func method")
+}
+
 func writeTestFile(t *testing.T, path, contents string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))

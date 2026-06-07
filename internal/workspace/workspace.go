@@ -37,9 +37,11 @@ func GetHomeDir() (string, error) {
 
 // Init creates a new workspace.
 func Init(name string) (*Workspace, error) {
-	if err := validateName(name); err != nil {
+	cleanName, err := validateName(name)
+	if err != nil {
 		return nil, err
 	}
+	name = cleanName
 
 	home, err := GetHomeDir()
 	if err != nil {
@@ -74,9 +76,11 @@ func Init(name string) (*Workspace, error) {
 
 // Load loads an existing workspace.
 func Load(name string) (*Workspace, error) {
-	if err := validateName(name); err != nil {
+	cleanName, err := validateName(name)
+	if err != nil {
 		return nil, err
 	}
+	name = cleanName
 
 	home, err := GetHomeDir()
 	if err != nil {
@@ -180,13 +184,13 @@ func List() ([]string, error) {
 	return names, nil
 }
 
-func validateName(name string) error {
+func validateName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("workspace name cannot be empty")
+		return "", fmt.Errorf("workspace name cannot be empty")
 	}
 	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("invalid workspace name %q", name)
+		return "", fmt.Errorf("invalid workspace name %q", name)
 	}
-	return nil
+	return name, nil
 }

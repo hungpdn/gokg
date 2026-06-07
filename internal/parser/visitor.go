@@ -106,14 +106,9 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 			case *ast.FuncDecl:
 				obj := pkg.TypesInfo.Defs[node.Name]
 				if obj != nil {
-					var pkgPath string
-					if obj.Pkg() != nil {
-						pkgPath = obj.Pkg().Path()
-					}
-					funcID := BuildID(pkgPath, ".", obj.Name())
-					if sig, ok := obj.Type().(*types.Signature); ok && sig.Recv() != nil {
-						// It's a method
-						funcID = BuildID(pkgPath, ".", sig.Recv().Type().String(), ".", obj.Name())
+					funcID := getFuncID(obj)
+					if funcID == "" {
+						return true
 					}
 
 					fnNode := NewNode()
@@ -152,13 +147,8 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 						calledObj = pkg.TypesInfo.Uses[fun.Sel]
 					}
 
-					if _, ok := calledObj.(*types.Func); ok {
-						var pkgPath string
-						if calledObj.Pkg() != nil {
-							pkgPath = calledObj.Pkg().Path()
-						}
-						calledID := BuildID(pkgPath, ".", calledObj.Name())
-
+					calledID := getFuncID(calledObj)
+					if calledID != "" {
 						edge := NewEdge()
 						edge.From = currentFunc
 						edge.To = calledID
@@ -208,13 +198,8 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					result.Edges = append(result.Edges, spawnEdge)
 
 					// goroutineNode --CALLS--> targetFunc
-					if _, ok := calledObj.(*types.Func); ok {
-						var pkgPath string
-						if calledObj.Pkg() != nil {
-							pkgPath = calledObj.Pkg().Path()
-						}
-						calledID := BuildID(pkgPath, ".", calledObj.Name())
-
+					calledID := getFuncID(calledObj)
+					if calledID != "" {
 						callEdge := NewEdge()
 						callEdge.From = goroutineID
 						callEdge.To = calledID
@@ -332,4 +317,20 @@ func (p *Parser) resolveChannelNode(
 	}
 
 	return chanID
+}
+
+// getFuncID returns the unique identifier for a function or method.
+func getFuncID(calledObj types.Object) string {
+	if fn, ok := calledObj.(*types.Func); ok {
+		var pkgPath string
+		if fn.Pkg() != nil {
+			pkgPath = fn.Pkg().Path()
+		}
+		funcID := BuildID(pkgPath, ".", fn.Name())
+		if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+			funcID = BuildID(pkgPath, ".", sig.Recv().Type().String(), ".", fn.Name())
+		}
+		return funcID
+	}
+	return ""
 }
