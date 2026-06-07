@@ -11,6 +11,7 @@ import (
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/hungpdn/gokg/internal/watcher"
+	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 )
@@ -53,7 +54,28 @@ var mcpCmd = &cobra.Command{
 			defer closeStores(stores)
 
 			if enableWatch {
-				log.Printf("Warning: workspace MCP currently loads a static merged graph; file watching is disabled for workspace %q", workspaceName)
+				ws, err := workspace.Load(workspaceName)
+				if err != nil {
+					log.Printf("Warning: Failed to load workspace for watch: %v", err)
+				} else {
+					for repoID, repoPath := range ws.Config.Repos {
+						repoModule := detectModulePrefix(repoPath)
+						if repoModule == "" {
+							repoModule = repoID
+						}
+						p := parser.NewWorkspaceParser(repoModule, repoID, workspaceName)
+						w, err := watcher.NewWatcher(g, p, repoPath)
+						if err != nil {
+							log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repoID, err)
+							continue
+						}
+						if err := w.Start(ctx); err != nil {
+							log.Printf("Warning: Failed to start watcher for repo %q: %v", repoID, err)
+							continue
+						}
+						log.Printf("File watcher started for repo %q (%s)", repoID, repoPath)
+					}
+				}
 			}
 
 			server := mcp.NewServer(g)
