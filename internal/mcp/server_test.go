@@ -52,7 +52,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 7, "Should have 7 tools registered")
+	assert.Len(t, tools, 8, "Should have 8 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)

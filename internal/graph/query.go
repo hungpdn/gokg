@@ -299,3 +299,23 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 
 	return results, nil
 }
+
+// SearchNodes returns up to 50 nodes whose Name or ID contains the query string (case-insensitive).
+func (qb *QueryBuilder) SearchNodes(query string) ([]*parser.Node, error) {
+	qb.g.mu.RLock()
+	defer qb.g.mu.RUnlock()
+
+	query = strings.ToLower(query)
+	var results []*parser.Node
+
+	for _, pNode := range qb.g.nodes {
+		if strings.Contains(strings.ToLower(pNode.Name), query) || strings.Contains(strings.ToLower(pNode.ID), query) {
+			results = append(results, pNode)
+			if len(results) >= 50 {
+				break
+			}
+		}
+	}
+
+	return results, nil
+}

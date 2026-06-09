@@ -155,6 +155,17 @@ func (s *Server) handleToolsList(req *Request) *Response {
 				"required": []string{"source_id", "target_id"},
 			},
 		},
+		{
+			"name":        "search_nodes",
+			"description": "Searches for nodes by short name, struct name, or package name (case-insensitive) and returns their fully qualified Node IDs.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{"type": "string", "description": "The string to search for (e.g. 'ParseWorkspace')"},
+				},
+				"required": []string{"query"},
+			},
+		},
 	}
 
 	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
@@ -170,6 +181,7 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			InterfaceID string `json:"interface_id"`
 			SourceID    string `json:"source_id"`
 			TargetID    string `json:"target_id"`
+			Query       string `json:"query"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -227,6 +239,13 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			return s.errorResult(req.ID, err)
 		}
 		return s.textResult(req.ID, formatPathMarkdown(params.Arguments.SourceID, params.Arguments.TargetID, pathResults))
+
+	case "search_nodes":
+		nodes, err := qb.SearchNodes(params.Arguments.Query)
+		if err != nil {
+			return s.errorResult(req.ID, err)
+		}
+		return s.textResult(req.ID, formatNodeListMarkdown("Search Results", params.Arguments.Query, nodes))
 
 	default:
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
