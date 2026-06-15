@@ -70,7 +70,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 				return err
 			}
 
-			isInternal := strings.HasPrefix(pkg.PkgPath, p.ModulePrefix)
+			isInternal := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
 
 			node := NewNode()
 			node.ID = pkg.PkgPath
@@ -191,7 +191,7 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 	packageFolders := make(map[string]map[string]bool)
 
 	for _, pkg := range pkgs {
-		if !strings.HasPrefix(pkg.PkgPath, p.ModulePrefix) {
+		if !isInternalPackage(pkg.PkgPath, p.ModulePrefix) {
 			continue
 		}
 
@@ -325,7 +325,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 			return nil, err
 		}
 
-		isInternal := strings.HasPrefix(pkg.PkgPath, p.ModulePrefix)
+		isInternal := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
 
 		node := NewNode()
 		node.ID = pkg.PkgPath
@@ -375,7 +375,7 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 		}
 		visited[pkg.PkgPath] = true
 
-		isWorkspacePkg := strings.HasPrefix(pkg.PkgPath, p.ModulePrefix)
+		isWorkspacePkg := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
 		scope := pkg.Types.Scope()
 		for _, name := range scope.Names() {
 			obj := scope.Lookup(name)
@@ -427,4 +427,12 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 			}
 		}
 	}
+}
+
+func isInternalPackage(pkgPath, modulePrefix string) bool {
+	modulePrefix = strings.TrimSpace(modulePrefix)
+	if modulePrefix == "" {
+		return false
+	}
+	return pkgPath == modulePrefix || strings.HasPrefix(pkgPath, modulePrefix+"/")
 }

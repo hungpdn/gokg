@@ -82,6 +82,28 @@ func TestBadgerStorageIterate(t *testing.T) {
 	assert.Equal(t, 3, count)
 }
 
+func TestBadgerStorageReadOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewBadgerStorage(dir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, store.Put(ctx, []byte("node:1"), []byte("data1")))
+	require.NoError(t, store.Close())
+
+	readOnlyStore, err := NewBadgerStorageReadOnly(dir)
+	require.NoError(t, err)
+	defer readOnlyStore.Close()
+
+	val, err := readOnlyStore.Get(ctx, []byte("node:1"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("data1"), val)
+
+	err = readOnlyStore.Put(ctx, []byte("node:2"), []byte("data2"))
+	assert.Error(t, err)
+}
+
 func TestBadgerStorageCompactOptions(t *testing.T) {
 	dir := t.TempDir()
 

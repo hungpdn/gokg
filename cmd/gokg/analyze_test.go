@@ -64,14 +64,25 @@ func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	assert.DirExists(t, ws.GetRepoDBPath("service-a"))
 	assert.DirExists(t, ws.GetRepoDBPath("service-b"))
 
-	g, stores, err := loadWorkspaceGraph(context.Background(), "demo")
+	g, err := loadWorkspaceGraph(context.Background(), "demo")
 	require.NoError(t, err)
-	defer closeStores(stores)
 
 	exported, err := g.ExportJSON()
 	require.NoError(t, err)
 	assert.Contains(t, exported, "repo:service-a")
 	assert.Contains(t, exported, "repo:service-b")
+}
+
+func TestAnalyzeWorkspaceRejectsModuleFlag(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--workspace", "demo", "--module", "example.com/wrong"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--module cannot be used with --workspace")
 }
 
 func TestValidateRebuildDBPath(t *testing.T) {

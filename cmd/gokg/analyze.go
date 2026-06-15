@@ -118,6 +118,9 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	if cmd.Flags().Changed("db") {
 		return fmt.Errorf("--db cannot be used with --workspace; workspace mode stores each repo in its own database")
 	}
+	if cmd.Flags().Changed("module") {
+		return fmt.Errorf("--module cannot be used with --workspace; workspace mode detects each repo module from go.mod")
+	}
 
 	ws, err := workspace.Load(workspaceName)
 	if err != nil {
@@ -131,7 +134,6 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	runGC, _ := cmd.Flags().GetBool("gc")
-	moduleOverride, _ := cmd.Flags().GetString("module")
 
 	fmt.Printf("Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos))
 
@@ -142,7 +144,7 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	for _, repo := range repos {
 		repo := repo
 		group.Go(func() error {
-			result, err := analyzeWorkspaceRepo(groupCtx, ws, repo, moduleOverride, rebuild, runGC)
+			result, err := analyzeWorkspaceRepo(groupCtx, ws, repo, rebuild, runGC)
 			if err != nil {
 				return err
 			}
@@ -171,7 +173,6 @@ func analyzeWorkspaceRepo(
 	ctx context.Context,
 	ws *workspace.Workspace,
 	repo workspaceRepo,
-	moduleOverride string,
 	rebuild bool,
 	runGC bool,
 ) (workspaceAnalysisResult, error) {
@@ -196,10 +197,7 @@ func analyzeWorkspaceRepo(
 	}
 	defer store.Close()
 
-	modulePrefix := moduleOverride
-	if modulePrefix == "" {
-		modulePrefix = detectModulePrefix(repo.Path)
-	}
+	modulePrefix := detectModulePrefix(repo.Path)
 	if modulePrefix == "" {
 		modulePrefix = repo.ID
 	}

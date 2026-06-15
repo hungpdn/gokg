@@ -43,28 +43,17 @@ func (g *Graph) ExportMermaid() string {
 	var b strings.Builder
 	b.WriteString("flowchart TD\n")
 
-	// Pre-process nodes to get safe IDs for mermaid
-	safeID := func(id string) string {
-		s := strings.ReplaceAll(id, ".", "_")
-		s = strings.ReplaceAll(s, "/", "_")
-		s = strings.ReplaceAll(s, "-", "_")
-		s = strings.ReplaceAll(s, "(", "_")
-		s = strings.ReplaceAll(s, ")", "_")
-		s = strings.ReplaceAll(s, "*", "_")
-		return s
-	}
-
 	for _, node := range g.nodes {
-		sid := safeID(node.ID)
-		b.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", sid, nodeLabel(node.Name, string(node.Type))))
+		sid := mermaidSafeID(node.ID)
+		b.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", sid, escapeMermaidLabel(nodeLabel(node.Name, string(node.Type)))))
 	}
 
 	for _, edgeMap := range g.edges {
 		for _, edges := range edgeMap {
 			for _, edge := range edges {
-				sFrom := safeID(edge.From)
-				sTo := safeID(edge.To)
-				b.WriteString(fmt.Sprintf("    %s -->|%s| %s\n", sFrom, edge.Type, sTo))
+				sFrom := mermaidSafeID(edge.From)
+				sTo := mermaidSafeID(edge.To)
+				b.WriteString(fmt.Sprintf("    %s -->|%s| %s\n", sFrom, escapeMermaidLabel(string(edge.Type)), sTo))
 			}
 		}
 	}
@@ -106,4 +95,37 @@ func nodeLabel(name, nodeType string) string {
 		return name
 	}
 	return fmt.Sprintf("%s:%s", name, nodeType)
+}
+
+func mermaidSafeID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if r == '_' || isASCIIAlphaNum(r) {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	if b.Len() == 0 {
+		return "_"
+	}
+	safe := b.String()
+	if safe[0] >= '0' && safe[0] <= '9' {
+		return "_" + safe
+	}
+	return safe
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func escapeMermaidLabel(label string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		`"`, `\"`,
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+	return replacer.Replace(label)
 }

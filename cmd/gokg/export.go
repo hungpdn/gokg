@@ -29,12 +29,10 @@ var exportCmd = &cobra.Command{
 			}
 
 			fmt.Printf("Loading workspace graph from %q...\n", workspaceName)
-			var stores []storage.Storage
-			g, stores, err = loadWorkspaceGraph(ctx, workspaceName)
+			g, err = loadWorkspaceGraph(ctx, workspaceName)
 			if err != nil {
 				return err
 			}
-			defer closeStores(stores)
 		} else {
 			fmt.Printf("Loading graph from %s...\n", dbPath)
 			store, err := storage.NewBadgerStorage(dbPath)

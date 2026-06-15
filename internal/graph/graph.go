@@ -20,6 +20,7 @@ type Graph struct {
 	nodes      map[int64]*parser.Node
 	edges      map[int64]map[int64][]*parser.Edge
 	store      storage.Storage
+	repoStores map[string]storage.Storage
 	nextNodeID int64
 }
 
@@ -31,8 +32,23 @@ func NewGraph(store storage.Storage) *Graph {
 		nodes:      make(map[int64]*parser.Node),
 		edges:      make(map[int64]map[int64][]*parser.Edge),
 		store:      store,
+		repoStores: make(map[string]storage.Storage),
 		nextNodeID: 0,
 	}
+}
+
+// SetRepoStore registers a storage backend for a specific repository. Repo
+// stores are used in workspace mode so one in-memory graph can persist updates
+// back to the correct per-repo database.
+func (g *Graph) SetRepoStore(repoID string, store storage.Storage) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if store == nil {
+		delete(g.repoStores, repoID)
+		return
+	}
+	g.repoStores[repoID] = store
 }
 
 // AddNode adds a parser node to the graph and persists it.
@@ -141,24 +157,44 @@ func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.Pa
 }
 
 func (g *Graph) persistNode(ctx context.Context, pNode *parser.Node) {
-	if g.store == nil {
+	store := g.storageForNode(pNode)
+	if store == nil {
 		return
 	}
 	data, err := json.Marshal(pNode)
 	if err == nil {
-		_ = g.store.Put(ctx, []byte("node:"+pNode.ID), data)
+		_ = store.Put(ctx, []byte("node:"+pNode.ID), data)
 	}
 }
 
 func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) {
-	if g.store == nil {
+	store := g.storageForEdge(pEdge)
+	if store == nil {
 		return
 	}
 	data, err := json.Marshal(pEdge)
 	if err == nil {
 		key := fmt.Sprintf("edge:%s:%s:%s", pEdge.From, pEdge.To, pEdge.Type)
-		_ = g.store.Put(ctx, []byte(key), data)
+		_ = store.Put(ctx, []byte(key), data)
 	}
+}
+
+func (g *Graph) storageForNode(pNode *parser.Node) storage.Storage {
+	if pNode != nil && pNode.RepoID != "" {
+		if store := g.repoStores[pNode.RepoID]; store != nil {
+			return store
+		}
+	}
+	return g.store
+}
+
+func (g *Graph) storageForEdge(pEdge *parser.Edge) storage.Storage {
+	if pEdge != nil && pEdge.RepoID != "" {
+		if store := g.repoStores[pEdge.RepoID]; store != nil {
+			return store
+		}
+	}
+	return g.store
 }
 
 func shouldReplaceNode(existing, candidate *parser.Node) bool {
@@ -190,10 +226,15 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 
 	var edgesData [][]byte
 
-	// Temporarily unset g.store so AddNode and AddEdge don't write back to DB
+	// Temporarily unset stores so AddNode and AddEdge don't write back to DB
 	store := g.store
+	repoStores := g.repoStores
 	g.store = nil
-	defer func() { g.store = store }()
+	g.repoStores = nil
+	defer func() {
+		g.store = store
+		g.repoStores = repoStores
+	}()
 
 	for _, store := range stores {
 		err := store.Iterate(ctx, func(key []byte, value []byte) error {
@@ -249,17 +290,17 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 		delete(g.nodes, id)
 
 		// Remove from BadgerDB
-		if g.store != nil {
-			_ = g.store.Delete(ctx, []byte("node:"+node.ID))
+		if store := g.storageForNode(node); store != nil {
+			_ = store.Delete(ctx, []byte("node:"+node.ID))
 		}
 
 		// Remove all outbound edges from this node
 		if outEdges, ok := g.edges[id]; ok {
 			for _, edges := range outEdges {
 				for _, edge := range edges {
-					if g.store != nil {
+					if store := g.storageForEdge(edge); store != nil {
 						key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
-						_ = g.store.Delete(ctx, []byte(key))
+						_ = store.Delete(ctx, []byte(key))
 					}
 				}
 			}

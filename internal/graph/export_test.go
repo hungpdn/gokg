@@ -41,6 +41,38 @@ func TestExportMermaid(t *testing.T) {
 	assert.Contains(t, mermaid, "pkg_A -->|CALLS| pkg_B")
 }
 
+func TestExportMermaidSanitizesWorkspaceIDsAndLabels(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+
+	n1 := parser.NewNode()
+	n1.ID = "workspace:demo"
+	n1.Name = "demo"
+	n1.Type = parser.NodeTypeWorkspace
+
+	n2 := parser.NewNode()
+	n2.ID = "repo:lvl2:folder:."
+	n2.Name = "repo \"lvl2\"\nroot"
+	n2.Type = parser.NodeTypeFolder
+
+	_, err := g.AddNode(ctx, n1)
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, n2)
+	require.NoError(t, err)
+
+	e := parser.NewEdge()
+	e.From = n1.ID
+	e.To = n2.ID
+	e.Type = parser.EdgeTypeContains
+	require.NoError(t, g.AddEdge(ctx, e))
+
+	mermaid := g.ExportMermaid()
+	assert.Contains(t, mermaid, "workspace_demo[\"demo:WORKSPACE\"]")
+	assert.Contains(t, mermaid, `repo_lvl2_folder__["repo \"lvl2\"\nroot:FOLDER"]`)
+	assert.Contains(t, mermaid, "workspace_demo -->|CONTAINS| repo_lvl2_folder__")
+	assert.NotContains(t, mermaid, "repo:lvl2:folder:.")
+}
+
 func TestExportDot(t *testing.T) {
 	g := NewGraph(nil)
 	ctx := context.Background()

@@ -60,6 +60,34 @@ func TestAddRepo(t *testing.T) {
 	assert.Len(t, loaded.Config.Repos, 2)
 }
 
+func TestAddRepoRejectsDuplicateID(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	ws, err := Init("duplicate-repo-ws")
+	require.NoError(t, err)
+
+	require.NoError(t, ws.AddRepo("github.com/org/service-a", "/path/to/service-a"))
+	err = ws.AddRepo("github.com/org/service-a", "/another/path")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Equal(t, "/path/to/service-a", ws.Config.Repos["github.com/org/service-a"])
+}
+
+func TestAddRepoRejectsDBPathCollision(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	ws, err := Init("collision-repo-ws")
+	require.NoError(t, err)
+
+	require.NoError(t, ws.AddRepo("github.com/org/service-a", "/path/to/service-a"))
+	err = ws.AddRepo("github.com_org_service-a", "/path/to/service-a-copy")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database path collides")
+	assert.NotContains(t, ws.Config.Repos, "github.com_org_service-a")
+}
+
 func TestGetRepoDBPath(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

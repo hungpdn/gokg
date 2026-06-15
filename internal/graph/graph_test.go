@@ -153,6 +153,52 @@ func TestLoadFromStoragesResolvesPersistedCrossRepoEdges(t *testing.T) {
 	assert.Equal(t, "example.com/service-b.Handle", deps[0].ID)
 }
 
+func TestGraphPersistsToRepoStores(t *testing.T) {
+	ctx := context.Background()
+	storeA, err := storage.NewBadgerStorage(t.TempDir())
+	require.NoError(t, err)
+	defer storeA.Close()
+	storeB, err := storage.NewBadgerStorage(t.TempDir())
+	require.NoError(t, err)
+	defer storeB.Close()
+
+	g := NewGraph(nil)
+	g.SetRepoStore("service-a", storeA)
+	g.SetRepoStore("service-b", storeB)
+
+	result := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "example.com/service-a.Work", Type: parser.NodeTypeFunc, Name: "Work", PkgPath: "example.com/service-a", RepoID: "service-a"},
+			{ID: "example.com/service-b.Handle", Type: parser.NodeTypeFunc, Name: "Handle", PkgPath: "example.com/service-b", RepoID: "service-b"},
+		},
+		Edges: []*parser.Edge{
+			{From: "example.com/service-a.Work", To: "example.com/service-b.Handle", Type: parser.EdgeTypeCalls, RepoID: "service-a"},
+		},
+	}
+
+	require.NoError(t, g.BuildFromParseResult(ctx, result))
+
+	_, err = storeA.Get(ctx, []byte("node:example.com/service-a.Work"))
+	require.NoError(t, err)
+	_, err = storeB.Get(ctx, []byte("node:example.com/service-a.Work"))
+	assert.Error(t, err)
+
+	_, err = storeB.Get(ctx, []byte("node:example.com/service-b.Handle"))
+	require.NoError(t, err)
+	_, err = storeA.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	require.NoError(t, err)
+	_, err = storeB.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	assert.Error(t, err)
+
+	require.NoError(t, g.RemovePackage(ctx, "example.com/service-a"))
+	_, err = storeA.Get(ctx, []byte("node:example.com/service-a.Work"))
+	assert.Error(t, err)
+	_, err = storeA.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	assert.Error(t, err)
+	_, err = storeB.Get(ctx, []byte("node:example.com/service-b.Handle"))
+	require.NoError(t, err)
+}
+
 func TestIncrementalWatcherInboundEdgePreservation(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

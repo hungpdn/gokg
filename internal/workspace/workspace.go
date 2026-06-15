@@ -126,9 +126,29 @@ func (ws *Workspace) Save() error {
 
 // AddRepo adds a repository to the workspace.
 func (ws *Workspace) AddRepo(repoID string, absPath string) error {
+	repoID = strings.TrimSpace(repoID)
+	if repoID == "" {
+		return fmt.Errorf("repo ID cannot be empty")
+	}
+	absPath = strings.TrimSpace(absPath)
+	if absPath == "" {
+		return fmt.Errorf("repo path cannot be empty")
+	}
+
 	if ws.Config.Repos == nil {
 		ws.Config.Repos = make(map[string]string)
 	}
+	if _, exists := ws.Config.Repos[repoID]; exists {
+		return fmt.Errorf("repo %q already exists in workspace %q", repoID, ws.Name)
+	}
+
+	dbPath := filepath.Clean(ws.GetRepoDBPath(repoID))
+	for existingRepoID := range ws.Config.Repos {
+		if filepath.Clean(ws.GetRepoDBPath(existingRepoID)) == dbPath {
+			return fmt.Errorf("repo %q database path collides with existing repo %q at %s", repoID, existingRepoID, dbPath)
+		}
+	}
+
 	ws.Config.Repos[repoID] = absPath
 	return ws.Save()
 }

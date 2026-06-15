@@ -70,6 +70,35 @@ gokg export --format mermaid --out graph.md
 gokg export --format dot --out graph.dot
 ```
 
+### 4. Multi-Repo Workspaces
+Create a named workspace, add Go repositories, then analyze/export/serve the
+merged graph. Each repo is stored in its own BadgerDB directory under the
+workspace.
+
+```bash
+# Create a workspace
+gokg workspace init demo
+
+# Add repos. GoKG uses go.mod as the repo ID when available.
+gokg workspace add --workspace demo /path/to/service-a
+gokg workspace add --workspace demo /path/to/service-b
+
+# Build or rebuild all per-repo databases
+gokg analyze --workspace demo --rebuild
+
+# Export a merged graph
+gokg export --workspace demo --format mermaid --out graph.md
+
+# Serve the merged graph over MCP
+gokg mcp --workspace demo
+```
+
+Workspace mode detects each repo module from that repo's `go.mod`. Do not pass
+`--module` with `--workspace`; a single module override is unsafe for multi-repo
+graphs. The MCP server watches repo files by default and persists incremental
+updates back to the matching per-repo database. Use `--watch=false` to serve a
+static merged graph.
+
 ## 🧠 MCP Tools for AI Agents
 When connected to an AI agent, GoKG exposes the following tools (via RAG and graph traversal algorithms):
 

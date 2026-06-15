@@ -29,6 +29,18 @@ func NewBadgerStorage(path string) (Storage, error) {
 	return &badgerStorage{db: db}, nil
 }
 
+// NewBadgerStorageReadOnly opens an existing BadgerDB instance without taking
+// the writer role. It is intended for graph hydration/export paths.
+func NewBadgerStorageReadOnly(path string) (Storage, error) {
+	opts := badgerOptions(path).WithReadOnly(true)
+	db, err := badger.Open(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open badger db at %s in read-only mode: %w", path, err)
+	}
+
+	return &badgerStorage{db: db}, nil
+}
+
 func badgerOptions(path string) badger.Options {
 	opts := badger.DefaultOptions(path).
 		WithLogger(nil). // Disable default logger for cleaner CLI output

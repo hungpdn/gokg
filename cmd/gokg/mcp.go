@@ -46,35 +46,47 @@ var mcpCmd = &cobra.Command{
 			if cmd.Flags().Changed("db") {
 				return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
 			}
+			if cmd.Flags().Changed("module") {
+				return fmt.Errorf("--module cannot be used with --workspace; workspace mode detects each repo module from go.mod")
+			}
 
-			g, stores, err := loadWorkspaceGraph(ctx, workspaceName)
+			g, err := loadWorkspaceGraph(ctx, workspaceName)
 			if err != nil {
 				return err
 			}
-			defer closeStores(stores)
 
 			if enableWatch {
 				ws, err := workspace.Load(workspaceName)
 				if err != nil {
-					log.Printf("Warning: Failed to load workspace for watch: %v", err)
-				} else {
-					for repoID, repoPath := range ws.Config.Repos {
-						repoModule := detectModulePrefix(repoPath)
-						if repoModule == "" {
-							repoModule = repoID
-						}
-						p := parser.NewWorkspaceParser(repoModule, repoID, workspaceName)
-						w, err := watcher.NewWatcher(g, p, repoPath)
-						if err != nil {
-							log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repoID, err)
-							continue
-						}
-						if err := w.Start(ctx); err != nil {
-							log.Printf("Warning: Failed to start watcher for repo %q: %v", repoID, err)
-							continue
-						}
-						log.Printf("File watcher started for repo %q (%s)", repoID, repoPath)
+					return fmt.Errorf("failed to load workspace for watch: %w", err)
+				}
+
+				repoStores, err := openWorkspaceRepoStores(ws, false)
+				if err != nil {
+					return err
+				}
+				defer closeStoreMap(repoStores)
+
+				for repoID, store := range repoStores {
+					g.SetRepoStore(repoID, store)
+				}
+
+				for _, repo := range sortedWorkspaceRepos(ws) {
+					repoModule := detectModulePrefix(repo.Path)
+					if repoModule == "" {
+						repoModule = repo.ID
 					}
+					p := parser.NewWorkspaceParser(repoModule, repo.ID, workspaceName)
+					w, err := watcher.NewWatcher(g, p, repo.Path)
+					if err != nil {
+						log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repo.ID, err)
+						continue
+					}
+					if err := w.Start(ctx); err != nil {
+						log.Printf("Warning: Failed to start watcher for repo %q: %v", repo.ID, err)
+						continue
+					}
+					log.Printf("File watcher started for repo %q (%s)", repo.ID, repo.Path)
 				}
 			}
 

@@ -140,6 +140,14 @@ func TestParseWorkspaceAddsWorkspaceRepoHierarchy(t *testing.T) {
 	assert.True(t, hasEdge(result, rootFolderID, "example.com/service-a", EdgeTypeContains))
 }
 
+func TestInternalPackageBoundary(t *testing.T) {
+	assert.True(t, isInternalPackage("example.com/foo", "example.com/foo"))
+	assert.True(t, isInternalPackage("example.com/foo/internal/bar", "example.com/foo"))
+	assert.False(t, isInternalPackage("example.com/foo2", "example.com/foo"))
+	assert.False(t, isInternalPackage("example.com/foobar/pkg", "example.com/foo"))
+	assert.False(t, isInternalPackage("example.com/foo", ""))
+}
+
 func TestParseWorkspaceContextCancel(t *testing.T) {
 	withGoBuildCache(t)
 
