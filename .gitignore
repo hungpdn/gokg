@@ -5,3 +5,4 @@
 .gokg/
 bin/
 __debug*
+.codegraph

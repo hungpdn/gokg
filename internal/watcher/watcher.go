@@ -23,9 +23,11 @@ type Watcher struct {
 	p       *parser.Parser
 	rootDir string
 
-	mu     sync.Mutex
-	timers map[string]*time.Timer
-	delay  time.Duration
+	mu        sync.Mutex
+	updateMu  sync.Mutex
+	timers    map[string]*time.Timer
+	delay     time.Duration
+	runUpdate func(context.Context, func(context.Context) error) error
 }
 
 func NewWatcher(g *graph.Graph, p *parser.Parser, rootDir string) (*Watcher, error) {
@@ -41,7 +43,23 @@ func NewWatcher(g *graph.Graph, p *parser.Parser, rootDir string) (*Watcher, err
 		rootDir: rootDir,
 		timers:  make(map[string]*time.Timer),
 		delay:   500 * time.Millisecond,
+		runUpdate: func(ctx context.Context, update func(context.Context) error) error {
+			return update(ctx)
+		},
 	}, nil
+}
+
+func (w *Watcher) SetUpdateRunner(runUpdate func(context.Context, func(context.Context) error) error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if runUpdate == nil {
+		w.runUpdate = func(ctx context.Context, update func(context.Context) error) error {
+			return update(ctx)
+		}
+		return
+	}
+	w.runUpdate = runUpdate
 }
 
 func (w *Watcher) Start(ctx context.Context) error {
@@ -118,8 +136,12 @@ func (w *Watcher) debounce(ctx context.Context, dir string) {
 }
 
 func (w *Watcher) updatePackage(ctx context.Context, dir string) {
+	w.updateMu.Lock()
+	defer w.updateMu.Unlock()
+
 	w.mu.Lock()
 	delete(w.timers, dir)
+	runUpdate := w.runUpdate
 	w.mu.Unlock()
 
 	log.Printf("Detected change in %s, updating graph incrementally...", dir)
@@ -133,22 +155,24 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 	}
 	pkgPath := pkgs[0].PkgPath
 
-	// 1. Remove old nodes and edges from the graph and DB
-	if err := w.g.RemovePackage(ctx, pkgPath); err != nil {
-		log.Printf("Error removing old package nodes: %v", err)
-		return
-	}
-
-	// 2. Reparse the package
+	// Reparse before mutating the graph so a transient parse failure does not
+	// erase the previous package snapshot.
 	res, err := w.p.ParsePackage(ctx, dir)
 	if err != nil {
 		log.Printf("Error reparsing package %s: %v", pkgPath, err)
 		return
 	}
 
-	// 3. Add to graph
-	if err := w.g.BuildFromParseResult(ctx, res); err != nil {
-		log.Printf("Error building graph from new parse result: %v", err)
+	if err := runUpdate(ctx, func(ctx context.Context) error {
+		if err := w.g.RemovePackage(ctx, pkgPath); err != nil {
+			return fmt.Errorf("remove old package nodes: %w", err)
+		}
+		if err := w.g.BuildFromParseResult(ctx, res); err != nil {
+			return fmt.Errorf("build graph from new parse result: %w", err)
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Error updating graph for package %s: %v", pkgPath, err)
 		return
 	}
 

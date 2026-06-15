@@ -61,16 +61,6 @@ var mcpCmd = &cobra.Command{
 					return fmt.Errorf("failed to load workspace for watch: %w", err)
 				}
 
-				repoStores, err := openWorkspaceRepoStores(ws, false)
-				if err != nil {
-					return err
-				}
-				defer closeStoreMap(repoStores)
-
-				for repoID, store := range repoStores {
-					g.SetRepoStore(repoID, store)
-				}
-
 				for _, repo := range sortedWorkspaceRepos(ws) {
 					repoModule := detectModulePrefix(repo.Path)
 					if repoModule == "" {
@@ -82,6 +72,19 @@ var mcpCmd = &cobra.Command{
 						log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repo.ID, err)
 						continue
 					}
+					repoID := repo.ID
+					dbPath := ws.GetRepoDBPath(repoID)
+					w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
+						store, err := storage.NewBadgerStorage(dbPath)
+						if err != nil {
+							return fmt.Errorf("open watch storage for repo %q: %w", repoID, err)
+						}
+						g.SetRepoStore(repoID, store)
+						defer g.SetRepoStore(repoID, nil)
+						defer store.Close()
+
+						return update(ctx)
+					})
 					if err := w.Start(ctx); err != nil {
 						log.Printf("Warning: Failed to start watcher for repo %q: %v", repo.ID, err)
 						continue
@@ -99,12 +102,16 @@ var mcpCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to open storage: %w", err)
 		}
-		defer store.Close()
 
 		g := graph.NewGraph(store)
 		if err := g.LoadFromStorage(ctx); err != nil {
+			_ = store.Close()
 			return fmt.Errorf("failed to load graph from storage: %w", err)
 		}
+		if err := store.Close(); err != nil {
+			return err
+		}
+		g.SetStore(nil)
 
 		if enableWatch {
 			p := parser.NewParser(modulePrefix, modulePrefix)
@@ -112,6 +119,17 @@ var mcpCmd = &cobra.Command{
 			if err != nil {
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
 			} else {
+				w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
+					store, err := storage.NewBadgerStorage(dbPath)
+					if err != nil {
+						return fmt.Errorf("open watch storage: %w", err)
+					}
+					g.SetStore(store)
+					defer g.SetStore(nil)
+					defer store.Close()
+
+					return update(ctx)
+				})
 				if err := w.Start(ctx); err != nil {
 					log.Printf("Warning: Failed to start file watcher: %v", err)
 				} else {

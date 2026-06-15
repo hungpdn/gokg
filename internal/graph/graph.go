@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,6 +52,16 @@ func (g *Graph) SetRepoStore(repoID string, store storage.Storage) {
 	g.repoStores[repoID] = store
 }
 
+// SetStore replaces the default storage backend. It is used by long-running
+// servers that load once, close the DB while idle, and reopen it only for
+// incremental persistence.
+func (g *Graph) SetStore(store storage.Storage) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.store = store
+}
+
 // AddNode adds a parser node to the graph and persists it.
 func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) {
 	g.mu.Lock()
@@ -58,16 +69,24 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 
 	if id, exists := g.nodeMap[pNode.ID]; exists {
 		if g.nodes[id] == nil {
+			if err := g.persistNode(ctx, pNode); err != nil {
+				return id, err
+			}
 			g.nodes[id] = pNode
 			gNode := simple.Node(id)
 			g.directed.AddNode(gNode)
-			g.persistNode(ctx, pNode)
 			g.restoreInboundEdges(id)
 		} else if shouldReplaceNode(g.nodes[id], pNode) {
+			if err := g.persistNode(ctx, pNode); err != nil {
+				return id, err
+			}
 			g.nodes[id] = pNode
-			g.persistNode(ctx, pNode)
 		}
 		return id, nil // Already exists
+	}
+
+	if err := g.persistNode(ctx, pNode); err != nil {
+		return 0, err
 	}
 
 	g.nextNodeID++
@@ -80,7 +99,6 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 	gNode := simple.Node(id)
 	g.directed.AddNode(gNode)
 
-	g.persistNode(ctx, pNode)
 	g.restoreInboundEdges(id)
 
 	return id, nil
@@ -111,12 +129,15 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 			return nil
 		}
 	}
+
+	if err := g.persistEdge(ctx, pEdge); err != nil {
+		return err
+	}
+
 	g.edges[fromID][toID] = append(g.edges[fromID][toID], pEdge)
 
 	gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
 	g.directed.SetEdge(gEdge)
-
-	g.persistEdge(ctx, pEdge)
 
 	return nil
 }
@@ -147,7 +168,9 @@ func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.Pa
 			if err := g.AddEdge(ctx, edge); err != nil {
 				// Keep unresolved edges in storage so multi-DB loads can resolve
 				// them after all repos contribute their nodes.
-				g.persistEdge(ctx, edge)
+				if persistErr := g.persistEdge(ctx, edge); persistErr != nil {
+					return persistErr
+				}
 				continue
 			}
 		}
@@ -156,27 +179,34 @@ func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.Pa
 	return nil
 }
 
-func (g *Graph) persistNode(ctx context.Context, pNode *parser.Node) {
+func (g *Graph) persistNode(ctx context.Context, pNode *parser.Node) error {
 	store := g.storageForNode(pNode)
 	if store == nil {
-		return
+		return nil
 	}
 	data, err := json.Marshal(pNode)
-	if err == nil {
-		_ = store.Put(ctx, []byte("node:"+pNode.ID), data)
+	if err != nil {
+		return fmt.Errorf("marshal node %q: %w", pNode.ID, err)
 	}
+	if err := store.Put(ctx, []byte("node:"+pNode.ID), data); err != nil {
+		return fmt.Errorf("persist node %q: %w", pNode.ID, err)
+	}
+	return nil
 }
 
-func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) {
+func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) error {
 	store := g.storageForEdge(pEdge)
 	if store == nil {
-		return
+		return nil
 	}
 	data, err := json.Marshal(pEdge)
-	if err == nil {
-		key := fmt.Sprintf("edge:%s:%s:%s", pEdge.From, pEdge.To, pEdge.Type)
-		_ = store.Put(ctx, []byte(key), data)
+	if err != nil {
+		return fmt.Errorf("marshal edge %q -> %q: %w", pEdge.From, pEdge.To, err)
 	}
+	if err := store.Put(ctx, edgeStorageKey(pEdge), data); err != nil {
+		return fmt.Errorf("persist edge %q -> %q (%s): %w", pEdge.From, pEdge.To, pEdge.Type, err)
+	}
+	return nil
 }
 
 func (g *Graph) storageForNode(pNode *parser.Node) storage.Storage {
@@ -195,6 +225,24 @@ func (g *Graph) storageForEdge(pEdge *parser.Edge) storage.Storage {
 		}
 	}
 	return g.store
+}
+
+func edgeStorageKey(edge *parser.Edge) []byte {
+	parts := [3]string{edge.From, edge.To, string(edge.Type)}
+	data, err := json.Marshal(parts)
+	if err != nil {
+		return legacyEdgeStorageKey(edge)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+	return []byte("edge:v2:" + encoded)
+}
+
+func legacyEdgeStorageKey(edge *parser.Edge) []byte {
+	return []byte(fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type))
+}
+
+func edgeStorageDeleteKeys(edge *parser.Edge) [][]byte {
+	return [][]byte{edgeStorageKey(edge), legacyEdgeStorageKey(edge)}
 }
 
 func shouldReplaceNode(existing, candidate *parser.Node) bool {
@@ -291,7 +339,9 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 
 		// Remove from BadgerDB
 		if store := g.storageForNode(node); store != nil {
-			_ = store.Delete(ctx, []byte("node:"+node.ID))
+			if err := store.Delete(ctx, []byte("node:"+node.ID)); err != nil {
+				return fmt.Errorf("delete node %q: %w", node.ID, err)
+			}
 		}
 
 		// Remove all outbound edges from this node
@@ -299,8 +349,11 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 			for _, edges := range outEdges {
 				for _, edge := range edges {
 					if store := g.storageForEdge(edge); store != nil {
-						key := fmt.Sprintf("edge:%s:%s:%s", edge.From, edge.To, edge.Type)
-						_ = store.Delete(ctx, []byte(key))
+						for _, key := range edgeStorageDeleteKeys(edge) {
+							if err := store.Delete(ctx, key); err != nil {
+								return fmt.Errorf("delete edge %q -> %q (%s): %w", edge.From, edge.To, edge.Type, err)
+							}
+						}
 					}
 				}
 			}

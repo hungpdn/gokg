@@ -2,6 +2,8 @@ package graph
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hungpdn/gokg/internal/parser"
@@ -153,6 +155,71 @@ func TestLoadFromStoragesResolvesPersistedCrossRepoEdges(t *testing.T) {
 	assert.Equal(t, "example.com/service-b.Handle", deps[0].ID)
 }
 
+func TestPersistedEdgeKeysDoNotCollideWithColonIDs(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.NewBadgerStorage(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	edgeA := &parser.Edge{From: "a:b", To: "c", Type: parser.EdgeTypeCalls}
+	edgeB := &parser.Edge{From: "a", To: "b:c", Type: parser.EdgeTypeCalls}
+	require.Equal(t, string(legacyEdgeStorageKey(edgeA)), string(legacyEdgeStorageKey(edgeB)))
+	require.NotEqual(t, string(edgeStorageKey(edgeA)), string(edgeStorageKey(edgeB)))
+
+	g := NewGraph(store)
+	result := &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "a:b", Type: parser.NodeTypeFunc, Name: "A"},
+			{ID: "c", Type: parser.NodeTypeFunc, Name: "C"},
+			{ID: "a", Type: parser.NodeTypeFunc, Name: "A"},
+			{ID: "b:c", Type: parser.NodeTypeFunc, Name: "B"},
+		},
+		Edges: []*parser.Edge{edgeA, edgeB},
+	}
+
+	require.NoError(t, g.BuildFromParseResult(ctx, result))
+
+	var edgeKeys int
+	require.NoError(t, store.Iterate(ctx, func(key []byte, value []byte) error {
+		if strings.HasPrefix(string(key), "edge:") {
+			edgeKeys++
+		}
+		return nil
+	}))
+	assert.Equal(t, 2, edgeKeys)
+}
+
+func TestGraphReturnsPersistenceErrors(t *testing.T) {
+	ctx := context.Background()
+	wantErr := errors.New("disk full")
+
+	g := NewGraph(failingStorage{putErr: wantErr})
+	_, err := g.AddNode(ctx, &parser.Node{ID: "A", Type: parser.NodeTypeFunc, Name: "A"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "persist node")
+
+	g = NewGraph(nil)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "A", Type: parser.NodeTypeFunc, Name: "A"})
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "B", Type: parser.NodeTypeFunc, Name: "B"})
+	require.NoError(t, err)
+	g.SetStore(failingStorage{putErr: wantErr})
+	err = g.AddEdge(ctx, &parser.Edge{From: "A", To: "B", Type: parser.EdgeTypeCalls})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "persist edge")
+
+	g = NewGraph(nil)
+	require.NoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkg", Type: parser.NodeTypePackage, Name: "pkg", PkgPath: "pkg"},
+		},
+	}))
+	g.SetStore(failingStorage{deleteErr: wantErr})
+	err = g.RemovePackage(ctx, "pkg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete node")
+}
+
 func TestGraphPersistsToRepoStores(t *testing.T) {
 	ctx := context.Background()
 	storeA, err := storage.NewBadgerStorage(t.TempDir())
@@ -166,14 +233,13 @@ func TestGraphPersistsToRepoStores(t *testing.T) {
 	g.SetRepoStore("service-a", storeA)
 	g.SetRepoStore("service-b", storeB)
 
+	edge := &parser.Edge{From: "example.com/service-a.Work", To: "example.com/service-b.Handle", Type: parser.EdgeTypeCalls, RepoID: "service-a"}
 	result := &parser.ParseResult{
 		Nodes: []*parser.Node{
 			{ID: "example.com/service-a.Work", Type: parser.NodeTypeFunc, Name: "Work", PkgPath: "example.com/service-a", RepoID: "service-a"},
 			{ID: "example.com/service-b.Handle", Type: parser.NodeTypeFunc, Name: "Handle", PkgPath: "example.com/service-b", RepoID: "service-b"},
 		},
-		Edges: []*parser.Edge{
-			{From: "example.com/service-a.Work", To: "example.com/service-b.Handle", Type: parser.EdgeTypeCalls, RepoID: "service-a"},
-		},
+		Edges: []*parser.Edge{edge},
 	}
 
 	require.NoError(t, g.BuildFromParseResult(ctx, result))
@@ -185,15 +251,15 @@ func TestGraphPersistsToRepoStores(t *testing.T) {
 
 	_, err = storeB.Get(ctx, []byte("node:example.com/service-b.Handle"))
 	require.NoError(t, err)
-	_, err = storeA.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	_, err = storeA.Get(ctx, edgeStorageKey(edge))
 	require.NoError(t, err)
-	_, err = storeB.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	_, err = storeB.Get(ctx, edgeStorageKey(edge))
 	assert.Error(t, err)
 
 	require.NoError(t, g.RemovePackage(ctx, "example.com/service-a"))
 	_, err = storeA.Get(ctx, []byte("node:example.com/service-a.Work"))
 	assert.Error(t, err)
-	_, err = storeA.Get(ctx, []byte("edge:example.com/service-a.Work:example.com/service-b.Handle:CALLS"))
+	_, err = storeA.Get(ctx, edgeStorageKey(edge))
 	assert.Error(t, err)
 	_, err = storeB.Get(ctx, []byte("node:example.com/service-b.Handle"))
 	require.NoError(t, err)
@@ -257,4 +323,29 @@ func hasConcurrencyConnection(connections []ConcurrencyConnection, nodeID string
 		}
 	}
 	return false
+}
+
+type failingStorage struct {
+	putErr    error
+	deleteErr error
+}
+
+func (f failingStorage) Put(ctx context.Context, key []byte, value []byte) error {
+	return f.putErr
+}
+
+func (f failingStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f failingStorage) Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error {
+	return errors.New("not implemented")
+}
+
+func (f failingStorage) Delete(ctx context.Context, key []byte) error {
+	return f.deleteErr
+}
+
+func (f failingStorage) Close() error {
+	return nil
 }

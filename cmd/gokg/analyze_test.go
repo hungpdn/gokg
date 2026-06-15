@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,10 @@ func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, exported, "repo:service-a")
 	assert.Contains(t, exported, "repo:service-b")
+
+	reopenedStore, err := storage.NewBadgerStorage(ws.GetRepoDBPath("service-a"))
+	require.NoError(t, err)
+	require.NoError(t, reopenedStore.Close())
 }
 
 func TestAnalyzeWorkspaceRejectsModuleFlag(t *testing.T) {
