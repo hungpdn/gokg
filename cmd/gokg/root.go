@@ -23,4 +23,5 @@ func init() {
 	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(workspaceCmd)
+	rootCmd.AddCommand(queryCmd)
 }

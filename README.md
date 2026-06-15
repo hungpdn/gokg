@@ -3,115 +3,185 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**GoKG** is a local, open-source tool specialized in converting Golang source code into a Semantic Knowledge Graph. It acts as a "local brain" (MCP Server) providing ultra-deep architectural context for AI Coding Agents.
+**GoKG** is a local, open-source tool that converts Go source code into a semantic knowledge graph. It acts as a local MCP server that gives AI coding agents deep architectural context.
 
-Unlike generic Tree-sitter-based tools, GoKG intimately understands Go semantics—including Implicit Interfaces, Goroutines, Channels, and cross-package references—making it the ultimate context engine for AI-assisted Go development.
+Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understand packages, files, structs, interfaces, functions, methods, goroutines, channels, cross-package references, and multi-repo workspaces.
 
-## 🌟 Key Features
+---
 
-*   **Deep Semantic Parsing (Go-native)**: Extracts Packages, Files, Structs, Interfaces, Functions, and Methods.
-*   **Semantic Relationships**: Accurately maps `CALLS`, `IMPORTS`, `CONTAINS`, `IMPLEMENTS` (Implicit Interface deductions), `SPAWNS` (Goroutines), `SENDS_TO`, and `RECEIVES_FROM` (Channels).
-*   **Real-time Incremental Updates (Live Graph)**: Runs a background file watcher (`fsnotify`). When you hit Save, it incrementally removes and reparses only the modified package, updating the graph in milliseconds.
-*   **High Performance & Local Storage**: Uses [BadgerDB](https://github.com/dgraph-io/badger) to persist the graph on your local disk. It scales to massive codebases without blowing up your RAM.
-*   **MCP Server for AI Agents**: Fully compliant with the [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol), providing standard JSON-RPC 2.0 `stdio` endpoints for AI models (like Claude 3.5 Sonnet, GPT-4, etc.) to query the codebase directly.
-*   **Visual Export**: Export your codebase architecture to `Mermaid`, `Graphviz DOT`, or `JSON` formats.
+## Key Features
 
-## 🛠 Installation
+- **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, external boundaries, repos, and workspaces.
+- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
+- **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
+- **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` for IDEs and coding agents.
+- **Real-time incremental updates**: Optional file watcher reparses changed packages and merges updates into the live graph.
+- **Multi-repo workspaces**: Merges multiple Go repositories into one graph while storing each repo in its own BadgerDB.
+- **Visual export**: Exports the graph as `json`, `mermaid`, or `dot`.
 
-Ensure you have Go 1.25+ installed.
+---
+
+## Installation
+
+This module currently targets Go `1.25.0`.
 
 ```bash
-# Clone the repository
 git clone https://github.com/hungpdn/gokg.git
 cd gokg
-
-# Build and install the binary
 go install ./cmd/gokg
 ```
 
-## 🚀 Usage
+---
+
+## Usage
 
 ### 1. Build the Knowledge Graph
-Navigate to your Go project and run the analyzer. This will parse the AST and build a local BadgerDB database (by default in `.gokg/`).
 
 ```bash
 cd /path/to/your/go/project
 gokg analyze
 
-# Rebuild the database from scratch when you want to discard stale data
+# Rebuild from scratch
 gokg analyze --db .gokg/ --rebuild
 ```
 
-*Options:*
-*   `--module`: Explicitly set your module prefix (defaults to reading from `go.mod`).
-*   `--db`: Set a custom path for the local database (default: `.gokg/`).
-*   `--rebuild`: Delete the selected database directory before analysis and build a clean graph.
-*   `--gc`: Run Badger value-log garbage collection after analysis (default: `true`).
+| Flag | Default | Description |
+|---|---|---|
+| `--module` | auto from `go.mod` | Module prefix for internal packages |
+| `--db` | `.gokg/` | Path to BadgerDB directory |
+| `--workspace` | empty | Workspace name for multi-repo analysis |
+| `--rebuild` | `false` | Delete and rebuild the selected database |
+| `--gc` | `true` | Run BadgerDB value-log GC after analysis |
 
-GoKG uses compact BadgerDB defaults for local repositories, but Badger may still
-allocate files that are larger than the live graph data because of mmap and file
-preallocation.
-
-### 2. Run the MCP Server for AI
-Once the graph is built, you can start the MCP Server. AI IDEs (like Cursor, Zed) or agents can connect to this process via standard input/output.
+### 2. Run the MCP Server
 
 ```bash
 gokg mcp
+gokg mcp --workspace my-platform
 ```
 
-### 3. Export Visual Graphs
-Export the semantic graph to visualize your architecture.
+### 3. Run a Cypher Query
 
 ```bash
-# Export to Mermaid Markdown
+# Default local graph
+gokg query 'MATCH (n:FUNC) WHERE n.PkgPath CONTAINS "parser" RETURN n.Name, n.ID LIMIT 20'
+
+# Custom DB
+gokg query --db /path/to/.gokg 'MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name'
+
+# Merged workspace graph
+gokg query --workspace my-platform 'MATCH (n:FUNC) WHERE n.RepoID = "github.com/org/service-a" RETURN n.Name, n.PkgPath LIMIT 20'
+```
+
+### 4. Export Visual Graphs
+
+```bash
 gokg export --format mermaid --out graph.md
-
-# Export to Graphviz DOT
 gokg export --format dot --out graph.dot
+gokg export --format json --out graph.json
+gokg export --workspace my-platform --format json --out workspace-graph.json
 ```
 
-### 4. Multi-Repo Workspaces
-Create a named workspace, add Go repositories, then analyze/export/serve the
-merged graph. Each repo is stored in its own BadgerDB directory under the
-workspace.
+### 5. Multi-Repo Workspaces
 
 ```bash
-# Create a workspace
-gokg workspace init demo
+gokg workspace init my-platform
+gokg workspace add --workspace my-platform /path/to/service-a
+gokg workspace add --workspace my-platform /path/to/service-b
 
-# Add repos. GoKG uses go.mod as the repo ID when available.
-gokg workspace add --workspace demo /path/to/service-a
-gokg workspace add --workspace demo /path/to/service-b
+gokg analyze --workspace my-platform --rebuild
+gokg mcp --workspace my-platform
 
-# Build or rebuild all per-repo databases
-gokg analyze --workspace demo --rebuild
-
-# Export a merged graph
-gokg export --workspace demo --format mermaid --out graph.md
-
-# Serve the merged graph over MCP
-gokg mcp --workspace demo
+gokg workspace list
+gokg workspace show my-platform
+gokg workspace remove my-platform github.com/org/service-a
 ```
 
-Workspace mode detects each repo module from that repo's `go.mod`. Do not pass
-`--module` with `--workspace`; a single module override is unsafe for multi-repo
-graphs. The MCP server watches repo files by default and persists incremental
-updates back to the matching per-repo database. Use `--watch=false` to serve a
-static merged graph.
+---
 
-## 🧠 MCP Tools for AI Agents
-When connected to an AI agent, GoKG exposes the following tools (via RAG and graph traversal algorithms):
+## MCP Tools for AI Agents
 
-*   `get_dependencies`: Returns all nodes that a given function calls or imports.
-*   `get_blast_radius`: Returns all functions/files that depend on a given node (Reverse dependency).
-*   `get_concurrency_flow`: Traces goroutines and channel data flows.
-*   `get_concurrency_graph`: Returns goroutine and channel topology connected to a function, formatted as Markdown.
-*   `get_implementations`: Finds all Structs implementing a given Interface.
-*   `get_source_code`: Reads the raw Go source code of a specific node from disk.
-*   `find_path`: Finds the shortest call path (BFS) between two nodes.
+When connected through `gokg mcp`, GoKG exposes 9 tools:
 
-## 🤝 Contributing
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
+| Tool | Description |
+|---|---|
+| `get_dependencies` | All nodes a function calls or imports |
+| `get_blast_radius` | All nodes that depend on a given node |
+| `get_concurrency_flow` | Goroutines and channels connected to a node |
+| `get_concurrency_graph` | Goroutine/channel topology connected to a function |
+| `get_implementations` | Structs implementing a given interface |
+| `get_source_code` | Raw Go source for a node |
+| `find_path` | Shortest call path between two nodes |
+| `search_nodes` | Find nodes by name or ID substring |
+| `execute_cypher` | Run strict read-only Cypher queries against the graph |
 
-## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+---
+
+## Cypher Query Engine
+
+GoKG includes a lightweight Cypher subset for read-only graph exploration.
+
+```cypher
+MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
+```
+
+**Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `VAR`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`
+
+**Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`
+
+**Node properties:** `Name`, `ID`, `PkgPath`, `FilePath`, `Type`, `RepoID`
+
+**Edge properties:** `Type`, `From`, `To`, `RepoID`
+
+**WHERE operators:** `=`, `!=`, `CONTAINS`, plus `AND` between conditions.
+
+Validation is strict: unknown aliases, node/edge types, properties, and trailing tokens return errors instead of silently broadening the query.
+
+Examples:
+
+```cypher
+MATCH (n:FUNC) WHERE n.PkgPath CONTAINS "parser" RETURN n.Name, n.ID LIMIT 20
+MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = "Analyze" AND b.Type != "BOUNDARY" RETURN b.Name, b.Type LIMIT 20
+MATCH (caller)-[r:CALLS]->(target:FUNC) WHERE target.Name = "AddEdge" RETURN caller.Name, caller.ID LIMIT 30
+MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) WHERE i.Name = "Storage" RETURN s.Name, s.PkgPath
+MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) RETURN f.Name, c.Name
+MATCH (a)-[r]-(b) WHERE a.Name = "worker" RETURN a.Name, r.Type, b.Name, b.Type LIMIT 30
+```
+
+Full reference: [docs/cypher-reference.md](docs/cypher-reference.md)
+
+---
+
+## How AI Agents Use GoKG
+
+A typical workflow:
+
+```text
+1. User: "The payment service crashes when calling ProcessOrder"
+
+2. Agent calls search_nodes("ProcessOrder")
+   Gets candidate fully-qualified node IDs.
+
+3. Agent calls execute_cypher(
+   "MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = \"ProcessOrder\" RETURN b.Name, b.Type LIMIT 30"
+   )
+   Sees exactly what ProcessOrder calls.
+
+4. Agent calls get_blast_radius("...ProcessOrder...")
+   Understands what else breaks if ProcessOrder changes.
+
+5. Agent calls get_source_code("...ProcessOrder...")
+   Reads the implementation before editing.
+```
+
+The key is that `execute_cypher` exposes the graph schema in the MCP tool description, and invalid queries fail loudly with alias/property/type errors. That gives the LLM a tight feedback loop: build a query, inspect the error or results, refine, then combine with source-code tools.
+
+---
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

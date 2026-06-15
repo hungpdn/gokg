@@ -52,7 +52,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 8, "Should have 8 tools registered")
+	assert.Len(t, tools, 9, "Should have 9 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
@@ -63,6 +63,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, toolNames["get_source_code"])
 	assert.True(t, toolNames["find_path"])
 	assert.True(t, toolNames["get_concurrency_graph"])
+	assert.True(t, toolNames["execute_cypher"])
 }
 
 func TestHandleCallToolError(t *testing.T) {

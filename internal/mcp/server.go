@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hungpdn/gokg/internal/cypher"
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
 )
@@ -166,6 +167,85 @@ func (s *Server) handleToolsList(req *Request) *Response {
 				"required": []string{"query"},
 			},
 		},
+		{
+			"name": "execute_cypher",
+			"description": `Executes a GoKG Cypher query against the Go source code knowledge graph.
+
+SYNTAX: MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
+
+NODE TYPES (use in patterns as :TYPE):
+  PACKAGE    – a Go package (e.g. github.com/org/repo/internal/parser)
+  FILE       – a .go source file
+  FOLDER     – a physical directory on disk
+  FUNC       – a top-level function
+  METHOD     – a method on a struct
+  VAR        – a package or local variable node
+  STRUCT     – a struct type
+  INTERFACE  – an interface type
+  CHANNEL    – a channel variable (e.g. chan int)
+  GOROUTINE  – a goroutine spawned with 'go'
+  BOUNDARY   – an external dependency (outside the module)
+  REPO       – a repository root (multi-repo workspace)
+  WORKSPACE  – a multi-repo workspace root
+
+EDGE TYPES (use in patterns as :TYPE):
+  CALLS          – function/method calls another function/method
+  CONTAINS       – package contains file, file contains func/struct
+  IMPORTS        – file imports a package
+  IMPLEMENTS     – struct implements an interface
+  SPAWNS         – function spawns a goroutine
+  SENDS_TO       – function sends to a channel
+  RECEIVES_FROM  – function receives from a channel
+
+NODE PROPERTIES (use in WHERE and RETURN):
+  Name      – short identifier (e.g. "ParseWorkspace", "Storage")
+  ID        – fully-qualified unique ID (e.g. "github.com/org/repo/pkg.FuncName")
+  PkgPath   – Go package import path
+  FilePath  – absolute path to the source file
+  Type      – the NodeType string (e.g. "FUNC")
+  RepoID    – repository ID in workspace mode
+
+EDGE PROPERTIES (use in WHERE and RETURN):
+  Type      – the EdgeType string (e.g. "CALLS")
+  From      – source node ID
+  To        – target node ID
+  RepoID    – repository ID that discovered the edge
+
+OPERATORS in WHERE:
+  =          – exact match        (n.Name = "main")
+  !=         – not equal          (n.Name != "init")
+  CONTAINS   – substring match    (n.PkgPath CONTAINS "internal")
+  AND        – combine filters    (a.Name = "A" AND b.Type = "FUNC")
+
+Validation is strict: unknown aliases, node/edge types, properties, and trailing tokens return errors.
+
+PATTERN SYNTAX:
+  (n:FUNC)                         – node only
+  (a:FUNC)-[r:CALLS]->(b:FUNC)     – outbound edge
+  (a:FUNC)<-[r:CALLS]-(b:FUNC)     – inbound edge
+  (a)-[r]-(b)                      – any direction, any type
+
+EXAMPLES:
+  MATCH (n:FUNC) WHERE n.PkgPath CONTAINS "parser" RETURN n LIMIT 20
+  MATCH (a:FUNC)-[r:CALLS]->(b:FUNC) WHERE a.Name = "Analyze" RETURN b.Name LIMIT 10
+  MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = "Analyze" AND b.Type != "BOUNDARY" RETURN b.Name, b.Type LIMIT 20
+  MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name
+  MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name
+  MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name
+  MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n
+
+Always include MATCH and RETURN. Use LIMIT after RETURN to cap large results.`,
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "A GoKG Cypher query string. Must include MATCH and RETURN; optional LIMIT comes after RETURN. See tool description for full syntax and node/edge type reference.",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
 	}
 
 	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
@@ -246,6 +326,18 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			return s.errorResult(req.ID, err)
 		}
 		return s.textResult(req.ID, formatNodeListMarkdown("Search Results", params.Arguments.Query, nodes))
+
+	case "execute_cypher":
+		q, err := cypher.NewParser(cypher.NewLexer(params.Arguments.Query)).ParseQuery()
+		if err != nil {
+			return s.errorResult(req.ID, fmt.Errorf("cypher parse error: %w", err))
+		}
+		rows, err := qb.ExecuteCypher(q)
+		if err != nil {
+			return s.errorResult(req.ID, err)
+		}
+		data, _ := json.MarshalIndent(rows, "", "  ")
+		return s.textResult(req.ID, formatCypherMarkdown(params.Arguments.Query, string(data)))
 
 	default:
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
@@ -335,6 +427,16 @@ func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResul
 			b.WriteString(fmt.Sprintf("  ↓ _%s_\n", pr.EdgeType))
 		}
 	}
+	return b.String()
+}
+
+func formatCypherMarkdown(query, jsonData string) string {
+	var b strings.Builder
+	b.WriteString("## Cypher Query Results\n\n")
+	b.WriteString(fmt.Sprintf("**Query:**\n```cypher\n%s\n```\n\n", query))
+	b.WriteString("**Results:**\n```json\n")
+	b.WriteString(jsonData)
+	b.WriteString("\n```\n")
 	return b.String()
 }
 
