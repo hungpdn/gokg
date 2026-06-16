@@ -17,6 +17,7 @@ Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understa
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` for IDEs and coding agents.
 - **Real-time incremental updates**: Optional file watcher reparses changed packages and merges updates into the live graph.
 - **Multi-repo workspaces**: Merges multiple Go repositories into one graph while storing each repo in its own BadgerDB.
+- **Graph statistics**: Reports node/edge/file counts, DB size, RAM estimate, node kinds, edge kinds, repo breakdowns, and top packages.
 - **Visual export**: Exports the graph as `json`, `mermaid`, or `dot`.
 
 ---
@@ -73,7 +74,22 @@ gokg query --db /path/to/.gokg 'MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) R
 gokg query --workspace my-platform 'MATCH (n:FUNC) WHERE n.RepoID = "github.com/org/service-a" RETURN n.Name, n.PkgPath LIMIT 20'
 ```
 
-### 4. Export Visual Graphs
+### 4. Inspect Graph Statistics
+
+```bash
+# Human-readable local DB stats
+gokg stats --db .gokg
+
+# Workspace stats across all per-repo databases
+gokg stats --workspace my-platform
+
+# Machine-readable output for scripts/CI
+gokg stats --db .gokg --json
+```
+
+`gokg stats` reports total nodes, edges, file nodes, unique source files, DB size, graph RAM estimate, current process heap allocation, nodes by kind, edges by kind, repo breakdowns, and the largest packages by node count.
+
+### 5. Export Visual Graphs
 
 ```bash
 gokg export --format mermaid --out graph.md
@@ -82,7 +98,7 @@ gokg export --format json --out graph.json
 gokg export --workspace my-platform --format json --out workspace-graph.json
 ```
 
-### 5. Multi-Repo Workspaces
+### 6. Multi-Repo Workspaces
 
 ```bash
 gokg workspace init my-platform
