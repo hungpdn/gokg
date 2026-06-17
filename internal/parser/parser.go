@@ -150,7 +150,7 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 			node.Type = NodeTypeFolder
 			node.Name = rel
 			if rel == "." {
-				node.Name = "/"
+				node.Name = filepath.Base(root)
 			}
 			node.FilePath = path
 			node.RepoID = p.RepoID

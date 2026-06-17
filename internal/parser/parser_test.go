@@ -29,7 +29,7 @@ func TestParseWorkspace(t *testing.T) {
 		if n.Type == NodeTypePackage && n.PkgPath == "github.com/hungpdn/gokg/internal/parser" {
 			foundPkg = true
 		}
-		if n.Type == NodeTypeFunc && n.Name == "ParseWorkspace" {
+		if n.Type == NodeTypeMethod && n.Name == "ParseWorkspace" {
 			foundFunc = true
 		}
 	}
@@ -76,11 +76,22 @@ func process(ch chan int) {
 	nodes := nodesByID(result)
 	require.NotNil(t, nodes["folder:."])
 	require.Equal(t, NodeTypeFolder, nodes["folder:."].Type)
+	assert.Equal(t, filepath.Base(dir), nodes["folder:."].Name)
 	require.NotNil(t, nodes["folder:worker"])
 	require.Equal(t, NodeTypeFolder, nodes["folder:worker"].Type)
 	assert.Nil(t, nodes["folder:.gokg"])
 	assert.Nil(t, nodes["folder:worker/testdata"])
 	assert.Nil(t, nodes["folder:vendor"])
+
+	var workerFile *Node
+	for _, n := range result.Nodes {
+		if n.Type == NodeTypeFile && n.FilePath == filepath.Join(dir, "worker", "worker.go") {
+			workerFile = n
+			break
+		}
+	}
+	require.NotNil(t, workerFile)
+	assert.Equal(t, "worker.go", workerFile.Name)
 
 	pkgID := "example.com/phase9/worker"
 	startID := pkgID + ".Start"
@@ -200,6 +211,8 @@ func main() {
 
 	require.NotNil(t, nodes[structMethodID], "Struct method should be parsed")
 	require.NotNil(t, nodes[funcMethodID], "Custom func method should be parsed")
+	assert.Equal(t, NodeTypeMethod, nodes[structMethodID].Type)
+	assert.Equal(t, NodeTypeMethod, nodes[funcMethodID].Type)
 
 	// Verify IMPLEMENTS edges
 	interfaceID := "example.com/test.MyInterface"
@@ -213,6 +226,187 @@ func main() {
 	mainID := "example.com/test.main"
 	assert.True(t, hasEdge(result, mainID, structMethodID, EdgeTypeCalls), "main calls struct method")
 	assert.True(t, hasEdge(result, mainID, funcMethodID, EdgeTypeCalls), "main calls func method")
+}
+
+func TestParseWorkspaceCapturesSemanticEdges(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/lvl2\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+import (
+	"fmt"
+	"sync"
+
+	"example.com/lvl2/task"
+	"example.com/lvl2/worker"
+)
+
+func main() {
+	jobs := make(chan task.Task, 5)
+	results := make(chan task.Task, 5)
+	var wg sync.WaitGroup
+
+	for w := 1; w <= 3; w++ {
+		wg.Add(1)
+		go worker.New(w).Start(jobs, results, &wg)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for j := 1; j <= 5; j++ {
+		jobs <- task.New(j, j*10)
+	}
+	close(jobs)
+
+	worker.PrintResults(results)
+
+	fmt.Println("done")
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "task", "task.go"), `package task
+
+import "fmt"
+
+type Task struct {
+	ID     int
+	Value  int
+	Result int
+}
+
+func New(id int, value int) Task {
+	return Task{ID: id, Value: value}
+}
+
+func (t Task) Summary() string {
+	if t.Result == 0 {
+		return fmt.Sprintf("Task %d = %d", t.ID, t.Value)
+	}
+	return fmt.Sprintf("Task %d = %d -> %d", t.ID, t.Value, t.Result)
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "task", "processor.go"), `package task
+
+func (t Task) Process() Task {
+	t.Result = t.Value * 2
+	return t
+}
+
+func ProcessBatch(tasks []Task) []Task {
+	results := make([]Task, 0, len(tasks))
+	for _, t := range tasks {
+		results = append(results, t.Process())
+	}
+	return results
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "worker", "worker.go"), `package worker
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"example.com/lvl2/task"
+)
+
+type Worker struct {
+	ID int
+}
+
+func New(id int) *Worker {
+	return &Worker{ID: id}
+}
+
+func (w *Worker) Start(tasks <-chan task.Task, results chan<- task.Task, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for t := range tasks {
+		fmt.Printf("Worker %d received %s\n", w.ID, t.Summary())
+		time.Sleep(150 * time.Millisecond)
+		results <- t.Process()
+	}
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "worker", "printer.go"), `package worker
+
+import (
+	"fmt"
+
+	"example.com/lvl2/task"
+)
+
+func PrintResults(results <-chan task.Task) {
+	for r := range results {
+		fmt.Println("result:", r.Summary())
+	}
+}
+`)
+
+	parser := NewParser("example.com/lvl2", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nodes := nodesByID(result)
+	mainID := "example.com/lvl2.main"
+	taskID := "example.com/lvl2/task.Task"
+	workerID := "example.com/lvl2/worker.Worker"
+	taskNewID := "example.com/lvl2/task.New"
+	workerNewID := "example.com/lvl2/worker.New"
+	processBatchID := "example.com/lvl2/task.ProcessBatch"
+	printResultsID := "example.com/lvl2/worker.PrintResults"
+	processID := "example.com/lvl2/task.example.com/lvl2/task.Task.Process"
+	summaryID := "example.com/lvl2/task.example.com/lvl2/task.Task.Summary"
+	startID := "example.com/lvl2/worker.*example.com/lvl2/worker.Worker.Start"
+
+	require.NotNil(t, nodes[processID])
+	require.NotNil(t, nodes[summaryID])
+	require.NotNil(t, nodes[startID])
+	assert.Equal(t, NodeTypeMethod, nodes[processID].Type)
+	assert.Equal(t, NodeTypeMethod, nodes[summaryID].Type)
+	assert.Equal(t, NodeTypeMethod, nodes[startID].Type)
+
+	assert.True(t, hasEdge(result, taskID, processID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, taskID, summaryID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, workerID, startID, EdgeTypeContains))
+
+	assert.True(t, hasEdge(result, mainID, workerNewID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, mainID, taskNewID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, mainID, printResultsID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, processBatchID, processID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, printResultsID, summaryID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, startID, summaryID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, startID, processID, EdgeTypeCalls))
+
+	assert.True(t, hasEdge(result, taskNewID, taskID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, taskNewID, taskID, EdgeTypeInstantiates))
+	assert.True(t, hasEdge(result, workerNewID, workerID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, workerNewID, workerID, EdgeTypeInstantiates))
+	assert.True(t, hasEdge(result, startID, taskID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, printResultsID, taskID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, processBatchID, taskID, EdgeTypeReferences))
+
+	for _, id := range []string{"fmt", "sync", "time", "fmt.Println", "fmt.Printf", "fmt.Sprintf", "time.Sleep", "sync.*sync.WaitGroup.Add", "sync.*sync.WaitGroup.Done", "sync.*sync.WaitGroup.Wait"} {
+		require.NotNil(t, nodes[id], "expected boundary node %s", id)
+		assert.Equal(t, NodeTypeBoundary, nodes[id].Type)
+	}
+	assert.True(t, hasEdge(result, startID, "fmt.Printf", EdgeTypeCalls))
+	assert.True(t, hasEdge(result, startID, "time.Sleep", EdgeTypeCalls))
+	assert.True(t, hasEdge(result, summaryID, "fmt.Sprintf", EdgeTypeCalls))
+
+	var startGoroutineID string
+	for _, n := range result.Nodes {
+		if n.Type == NodeTypeGoroutine && strings.HasPrefix(n.ID, mainID+".goroutine_L") && hasEdge(result, n.ID, startID, EdgeTypeCalls) {
+			startGoroutineID = n.ID
+			break
+		}
+	}
+	require.NotEmpty(t, startGoroutineID)
+	assert.True(t, hasEdge(result, mainID, startGoroutineID, EdgeTypeSpawns))
 }
 
 func writeTestFile(t *testing.T, path, contents string) {

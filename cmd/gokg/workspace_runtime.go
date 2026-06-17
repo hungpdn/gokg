@@ -75,34 +75,6 @@ func openWorkspaceStores(ws *workspace.Workspace, readOnly bool) ([]storage.Stor
 	return stores, nil
 }
 
-func openWorkspaceRepoStores(ws *workspace.Workspace, readOnly bool) (map[string]storage.Storage, error) {
-	repos := sortedWorkspaceRepos(ws)
-	if len(repos) == 0 {
-		return nil, fmt.Errorf("workspace %q has no repositories", ws.Name)
-	}
-
-	stores := make(map[string]storage.Storage, len(repos))
-	for _, repo := range repos {
-		dbPath := ws.GetRepoDBPath(repo.ID)
-		if _, err := os.Stat(dbPath); err != nil {
-			_ = closeStoreMap(stores)
-			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("repo %q has no database at %s; run gokg analyze --workspace %s first", repo.ID, dbPath, ws.Name)
-			}
-			return nil, fmt.Errorf("failed to inspect database for repo %q: %w", repo.ID, err)
-		}
-
-		store, err := openWorkspaceStore(dbPath, readOnly)
-		if err != nil {
-			_ = closeStoreMap(stores)
-			return nil, fmt.Errorf("failed to open database for repo %q: %w", repo.ID, err)
-		}
-		stores[repo.ID] = store
-	}
-
-	return stores, nil
-}
-
 func openWorkspaceStore(dbPath string, readOnly bool) (storage.Storage, error) {
 	if readOnly {
 		return storage.NewBadgerStorageReadOnly(dbPath)
@@ -111,19 +83,6 @@ func openWorkspaceStore(dbPath string, readOnly bool) (storage.Storage, error) {
 }
 
 func closeStores(stores []storage.Storage) error {
-	var firstErr error
-	for _, store := range stores {
-		if store == nil {
-			continue
-		}
-		if err := store.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-func closeStoreMap(stores map[string]storage.Storage) error {
 	var firstErr error
 	for _, store := range stores {
 		if store == nil {

@@ -41,6 +41,8 @@ const (
 	EdgeTypeCalls        EdgeType = "CALLS"
 	EdgeTypeImplements   EdgeType = "IMPLEMENTS"
 	EdgeTypeImports      EdgeType = "IMPORTS"
+	EdgeTypeReferences   EdgeType = "REFERENCES"
+	EdgeTypeInstantiates EdgeType = "INSTANTIATES"
 	EdgeTypeSpawns       EdgeType = "SPAWNS"
 	EdgeTypeSendsTo      EdgeType = "SENDS_TO"
 	EdgeTypeReceivesFrom EdgeType = "RECEIVES_FROM"
