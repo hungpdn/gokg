@@ -34,6 +34,7 @@ func newAnalyzeCommand() *cobra.Command {
 	cmd.Flags().String("workspace", "", "Workspace name to analyze using per-repo databases")
 	cmd.Flags().Bool("rebuild", false, "Delete and rebuild the local database before analysis")
 	cmd.Flags().Bool("gc", true, "Run Badger value-log garbage collection after analysis")
+	cmd.Flags().Bool("tests", false, "Include _test.go files in analysis")
 	return cmd
 }
 
@@ -49,6 +50,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	dbPath, _ := cmd.Flags().GetString("db")
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	runGC, _ := cmd.Flags().GetBool("gc")
+	includeTests, _ := cmd.Flags().GetBool("tests")
 
 	if rebuild {
 		if err := rebuildBadgerDBPath(dbPath, cmd.Flags().Changed("db")); err != nil {
@@ -79,7 +81,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse Workspace
-	p := parser.NewParser(modulePrefix, modulePrefix)
+	p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
 	dir, _ := os.Getwd()
 	result, err := p.ParseWorkspace(ctx, dir)
 	if err != nil {
@@ -134,6 +136,7 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 
 	rebuild, _ := cmd.Flags().GetBool("rebuild")
 	runGC, _ := cmd.Flags().GetBool("gc")
+	includeTests, _ := cmd.Flags().GetBool("tests")
 
 	fmt.Printf("Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos))
 
@@ -144,7 +147,7 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	for _, repo := range repos {
 		repo := repo
 		group.Go(func() error {
-			result, err := analyzeWorkspaceRepo(groupCtx, ws, repo, rebuild, runGC)
+			result, err := analyzeWorkspaceRepo(groupCtx, ws, repo, rebuild, runGC, includeTests)
 			if err != nil {
 				return err
 			}
@@ -175,6 +178,7 @@ func analyzeWorkspaceRepo(
 	repo workspaceRepo,
 	rebuild bool,
 	runGC bool,
+	includeTests bool,
 ) (workspaceAnalysisResult, error) {
 	stat, err := os.Stat(repo.Path)
 	if err != nil {
@@ -202,7 +206,7 @@ func analyzeWorkspaceRepo(
 		modulePrefix = repo.ID
 	}
 
-	p := parser.NewWorkspaceParser(modulePrefix, repo.ID, ws.Name)
+	p := parser.NewWorkspaceParser(modulePrefix, repo.ID, ws.Name).WithTests(includeTests)
 	result, err := p.ParseWorkspace(ctx, repo.Path)
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("parse repo %q failed: %w", repo.ID, err)

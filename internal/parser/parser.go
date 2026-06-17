@@ -22,6 +22,7 @@ type Parser struct {
 	ModulePrefix string
 	RepoID       string
 	WorkspaceID  string
+	IncludeTests bool
 }
 
 func NewParser(modulePrefix, repoID string) *Parser {
@@ -32,6 +33,11 @@ func NewWorkspaceParser(modulePrefix, repoID, workspaceID string) *Parser {
 	return &Parser{ModulePrefix: modulePrefix, RepoID: repoID, WorkspaceID: workspaceID}
 }
 
+func (p *Parser) WithTests(includeTests bool) *Parser {
+	p.IncludeTests = includeTests
+	return p
+}
+
 // ParseWorkspace loads and parses the Go codebase in the given directory.
 func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
@@ -39,7 +45,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
-		Tests:   true,
+		Tests:   p.IncludeTests,
 	}
 
 	pkgs, err := packages.Load(cfg, "./...")
@@ -307,7 +313,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
-		Tests:   true,
+		Tests:   p.IncludeTests,
 	}
 
 	pkgs, err := packages.Load(cfg, ".")

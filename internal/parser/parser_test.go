@@ -154,11 +154,6 @@ func TestReady(t *testing.T) {
 }
 `)
 
-	parser := NewParser("example.com/inventory", "test-repo")
-	result, err := parser.ParseWorkspace(context.Background(), dir)
-	require.NoError(t, err)
-
-	nodes := nodesByID(result)
 	pkgID := "example.com/inventory"
 	statusID := pkgID + ".Status"
 	aliasID := pkgID + ".Alias"
@@ -170,6 +165,18 @@ func TestReady(t *testing.T) {
 	modelFile := filepath.Join(dir, "model.go")
 	testFile := filepath.Join(dir, "model_test.go")
 
+	defaultParser := NewParser(pkgID, "test-repo")
+	defaultResult, err := defaultParser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+	defaultNodes := nodesByID(defaultResult)
+	assert.Nil(t, defaultNodes[testFile], "test files should be skipped by default")
+	assert.Nil(t, defaultNodes[testReadyID], "test functions should be skipped by default")
+
+	parser := NewParser(pkgID, "test-repo").WithTests(true)
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nodes := nodesByID(result)
 	require.NotNil(t, nodes[statusID])
 	assert.Equal(t, NodeTypeTypeAlias, nodes[statusID].Type)
 	require.NotNil(t, nodes[aliasID])

@@ -27,6 +27,14 @@ func TestAnalyzeUsesDBFlag(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(projectDir, ".gokg"))
 }
 
+func TestAnalyzeTestsFlagDefaultsToFalse(t *testing.T) {
+	cmd := newAnalyzeCommand()
+	flag := cmd.Flags().Lookup("tests")
+
+	require.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
+}
+
 func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
 	withGoBuildCache(t)
 	projectDir := newTinyGoProject(t)
