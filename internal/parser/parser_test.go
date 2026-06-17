@@ -346,6 +346,42 @@ func main() {
 	}
 }
 
+func TestParseWorkspaceCapturesInstantiationOccurrences(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/inst\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+type Token struct {
+	Type string
+}
+
+func next() {
+	_ = Token{Type: "a"}
+	_ = Token{Type: "b"}
+}
+`)
+
+	parser := NewParser("example.com/inst", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nextID := "example.com/inst.next"
+	tokenID := "example.com/inst.Token"
+	instantiatesEdges := edgesBy(result, nextID, tokenID, EdgeTypeInstantiates)
+	require.Len(t, instantiatesEdges, 2)
+
+	var lines []int
+	for _, edge := range instantiatesEdges {
+		require.Len(t, edge.Occurrences, 1)
+		assert.Equal(t, filepath.Join(dir, "main.go"), edge.Occurrences[0].FilePath)
+		assert.Positive(t, edge.Occurrences[0].Column)
+		lines = append(lines, edge.Occurrences[0].Line)
+	}
+	assert.ElementsMatch(t, []int{8, 9}, lines)
+}
+
 func TestParseWorkspaceCapturesSemanticEdges(t *testing.T) {
 	withGoBuildCache(t)
 

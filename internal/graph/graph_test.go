@@ -101,6 +101,28 @@ func TestAddEdgeMergesCallOccurrences(t *testing.T) {
 	}, g.edges[fromID][toID][0].Occurrences)
 }
 
+func TestAddEdgePreservesSelfEdgesForExport(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	_, err := g.AddNode(ctx, &parser.Node{ID: "funcA", Type: parser.NodeTypeFunc, Name: "FuncA"})
+	require.NoError(t, err)
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: "funcA",
+		To:   "funcA",
+		Type: parser.EdgeTypeCalls,
+		Occurrences: []parser.EdgeOccurrence{
+			{FilePath: "main.go", Line: 10, Column: 2},
+		},
+	}))
+
+	nodeID := g.nodeMap["funcA"]
+	require.Len(t, g.edges[nodeID][nodeID], 1)
+	assert.Equal(t, parser.EdgeTypeCalls, g.edges[nodeID][nodeID][0].Type)
+	assert.Contains(t, g.ExportDot(), `"funcA" -> "funcA" [label="CALLS", occurrences="1", lines="main.go:10:2"];`)
+}
+
 func TestConcurrencyGraphIncludesGoroutinesAndChannels(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

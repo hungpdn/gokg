@@ -116,11 +116,6 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 		return fmt.Errorf("edge references unknown nodes: %s -> %s", pEdge.From, pEdge.To)
 	}
 
-	// Skip self-edges: gonum's simple.DirectedGraph panics on them.
-	if fromID == toID {
-		return nil
-	}
-
 	if g.edges[fromID] == nil {
 		g.edges[fromID] = make(map[int64][]*parser.Edge)
 	}
@@ -141,8 +136,12 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 
 	g.edges[fromID][toID] = append(g.edges[fromID][toID], pEdge)
 
-	gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
-	g.directed.SetEdge(gEdge)
+	// Keep self-edges in the semantic graph/export, but do not add them to
+	// gonum's simple.DirectedGraph because it panics on self-loops.
+	if fromID != toID {
+		gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
+		g.directed.SetEdge(gEdge)
+	}
 
 	return nil
 }
@@ -401,6 +400,9 @@ func (g *Graph) restoreInboundEdges(id int64) {
 	}
 	for fromID, outEdges := range g.edges {
 		if g.nodes[fromID] == nil {
+			continue
+		}
+		if fromID == id {
 			continue
 		}
 		if _, exists := outEdges[id]; exists {

@@ -327,7 +327,7 @@ func (p *Parser) inspectFunctionBody(
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(currentFunc, typ, mu, result)
-			p.addInstantiationEdge(currentFunc, typ, mu, result)
+			p.addInstantiationEdge(currentFunc, typ, edgeOccurrence(pkg, node), mu, result)
 		case *ast.SendStmt:
 			chanNodeID := p.resolveChannelNode(pkg, node.Chan, currentFunc, filename, createdChannels, mu, result)
 			if chanNodeID != "" {
@@ -432,18 +432,23 @@ func (p *Parser) addCallEdge(
 	})
 }
 
-func (p *Parser) addInstantiationEdge(from string, typ types.Type, mu *sync.Mutex, result *ParseResult) {
+func (p *Parser) addInstantiationEdge(from string, typ types.Type, occurrence EdgeOccurrence, mu *sync.Mutex, result *ParseResult) {
 	typeID, pkgPath, ok := graphTypeID(typ)
 	if !ok || !isInternalPackage(pkgPath, p.ModulePrefix) {
 		return
 	}
 
-	appendEdge(mu, result, &Edge{
+	edge := &Edge{
 		From:   from,
 		To:     typeID,
 		Type:   EdgeTypeInstantiates,
 		RepoID: p.RepoID,
-	})
+	}
+	if occurrence != (EdgeOccurrence{}) {
+		edge.Occurrences = []EdgeOccurrence{occurrence}
+	}
+
+	appendEdge(mu, result, edge)
 }
 
 func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mutex, result *ParseResult) {
@@ -478,7 +483,7 @@ func (p *Parser) addExpressionReferenceEdges(pkg *packages.Package, from string,
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(from, typ, mu, result)
-			p.addInstantiationEdge(from, typ, mu, result)
+			p.addInstantiationEdge(from, typ, edgeOccurrence(pkg, node), mu, result)
 		case *ast.Ident:
 			p.addObjectReferenceEdge(from, pkg.TypesInfo.Uses[node], seen, mu, result)
 		case *ast.SelectorExpr:
