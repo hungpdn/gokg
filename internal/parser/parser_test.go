@@ -287,11 +287,14 @@ func main() {
 	nodes := nodesByID(result)
 
 	// Verify method nodes
+	interfaceMethodID := "example.com/test.example.com/test.MyInterface.DoSomething"
 	structMethodID := "example.com/test.*example.com/test.MyStruct.DoSomething"
 	funcMethodID := "example.com/test.example.com/test.MyFunc.DoSomething"
 
+	require.NotNil(t, nodes[interfaceMethodID], "Interface method signature should be parsed")
 	require.NotNil(t, nodes[structMethodID], "Struct method should be parsed")
 	require.NotNil(t, nodes[funcMethodID], "Custom func method should be parsed")
+	assert.Equal(t, NodeTypeMethod, nodes[interfaceMethodID].Type)
 	assert.Equal(t, NodeTypeMethod, nodes[structMethodID].Type)
 	assert.Equal(t, NodeTypeMethod, nodes[funcMethodID].Type)
 
@@ -300,6 +303,7 @@ func main() {
 	structID := "example.com/test.MyStruct"
 	funcTypeID := "example.com/test.MyFunc"
 
+	assert.True(t, hasEdge(result, interfaceID, interfaceMethodID, EdgeTypeContains), "MyInterface contains DoSomething signature")
 	assert.True(t, hasEdge(result, structID, interfaceID, EdgeTypeImplements), "MyStruct implements MyInterface")
 	assert.True(t, hasEdge(result, funcTypeID, interfaceID, EdgeTypeImplements), "MyFunc implements MyInterface")
 
@@ -307,6 +311,39 @@ func main() {
 	mainID := "example.com/test.main"
 	assert.True(t, hasEdge(result, mainID, structMethodID, EdgeTypeCalls), "main calls struct method")
 	assert.True(t, hasEdge(result, mainID, funcMethodID, EdgeTypeCalls), "main calls func method")
+}
+
+func TestParseWorkspaceCapturesCallOccurrences(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/calls\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+func helper() {}
+
+func main() {
+	helper()
+	helper()
+}
+`)
+
+	parser := NewParser("example.com/calls", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	mainID := "example.com/calls.main"
+	helperID := "example.com/calls.helper"
+	callEdges := edgesBy(result, mainID, helperID, EdgeTypeCalls)
+	require.Len(t, callEdges, 2)
+
+	lines := []int{callEdges[0].Occurrences[0].Line, callEdges[1].Occurrences[0].Line}
+	assert.ElementsMatch(t, []int{6, 7}, lines)
+	for _, edge := range callEdges {
+		require.Len(t, edge.Occurrences, 1)
+		assert.Equal(t, filepath.Join(dir, "main.go"), edge.Occurrences[0].FilePath)
+		assert.Positive(t, edge.Occurrences[0].Column)
+	}
 }
 
 func TestParseWorkspaceCapturesSemanticEdges(t *testing.T) {
@@ -517,4 +554,14 @@ func hasEdge(result *ParseResult, from, to string, edgeType EdgeType) bool {
 		}
 	}
 	return false
+}
+
+func edgesBy(result *ParseResult, from, to string, edgeType EdgeType) []*Edge {
+	var edges []*Edge
+	for _, edge := range result.Edges {
+		if edge.From == from && edge.To == to && edge.Type == edgeType {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
 }

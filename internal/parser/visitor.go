@@ -119,6 +119,68 @@ func (p *Parser) extractTypeSpec(pkg *packages.Package, filename string, node *a
 	p.addTypeReferenceEdges(typeID, pkg.TypesInfo.TypeOf(node.Type), mu, result)
 	p.addTypeReferenceEdges(typeID, obj.Type(), mu, result)
 	p.addTypeReferenceEdges(typeID, obj.Type().Underlying(), mu, result)
+
+	if iface, ok := node.Type.(*ast.InterfaceType); ok {
+		p.extractInterfaceMethods(pkg, filename, typeID, iface, mu, result)
+	}
+}
+
+func (p *Parser) extractInterfaceMethods(
+	pkg *packages.Package,
+	filename string,
+	interfaceID string,
+	iface *ast.InterfaceType,
+	mu *sync.Mutex,
+	result *ParseResult,
+) {
+	if iface.Methods == nil {
+		return
+	}
+
+	for _, field := range iface.Methods.List {
+		funcType, ok := field.Type.(*ast.FuncType)
+		if !ok {
+			continue
+		}
+		for _, name := range field.Names {
+			obj := pkg.TypesInfo.Defs[name]
+			fn, ok := obj.(*types.Func)
+			if !ok {
+				continue
+			}
+
+			var pkgPath string
+			if fn.Pkg() != nil {
+				pkgPath = normalizePackagePath(fn.Pkg().Path())
+			}
+			methodID := BuildID(pkgPath, ".", interfaceID, ".", name.Name)
+
+			methodNode := NewNode()
+			methodNode.ID = methodID
+			methodNode.Type = NodeTypeMethod
+			methodNode.Name = name.Name
+			methodNode.PkgPath = packageGraphPath(pkg)
+			methodNode.FilePath = filename
+			methodNode.Lines = [2]int{
+				pkg.Fset.Position(field.Pos()).Line,
+				pkg.Fset.Position(field.End()).Line,
+			}
+			methodNode.RepoID = p.RepoID
+
+			appendNode(mu, result, methodNode)
+			appendEdge(mu, result, &Edge{
+				From:   interfaceID,
+				To:     methodID,
+				Type:   EdgeTypeContains,
+				RepoID: p.RepoID,
+			})
+			if sig, ok := fn.Type().(*types.Signature); ok {
+				p.addTypeReferenceEdges(methodID, sig, mu, result)
+			} else {
+				p.addTypeReferenceEdges(methodID, pkg.TypesInfo.TypeOf(funcType), mu, result)
+			}
+		}
+	}
 }
 
 func (p *Parser) extractValueSpec(
@@ -333,10 +395,11 @@ func (p *Parser) addGoroutineEdges(
 	if calledID := getFuncID(calledObj); calledID != "" {
 		p.ensureFunctionBoundaryNode(calledObj, calledID, createdBoundaryNodes, mu, result)
 		appendEdge(mu, result, &Edge{
-			From:   goroutineID,
-			To:     calledID,
-			Type:   EdgeTypeCalls,
-			RepoID: p.RepoID,
+			From:        goroutineID,
+			To:          calledID,
+			Type:        EdgeTypeCalls,
+			RepoID:      p.RepoID,
+			Occurrences: []EdgeOccurrence{edgeOccurrence(pkg, node.Call)},
 		})
 	}
 
@@ -361,10 +424,11 @@ func (p *Parser) addCallEdge(
 
 	p.ensureFunctionBoundaryNode(calledObj, calledID, createdBoundaryNodes, mu, result)
 	appendEdge(mu, result, &Edge{
-		From:   currentFunc,
-		To:     calledID,
-		Type:   EdgeTypeCalls,
-		RepoID: p.RepoID,
+		From:        currentFunc,
+		To:          calledID,
+		Type:        EdgeTypeCalls,
+		RepoID:      p.RepoID,
+		Occurrences: []EdgeOccurrence{edgeOccurrence(pkg, node)},
 	})
 }
 
@@ -553,6 +617,18 @@ func appendEdge(mu *sync.Mutex, result *ParseResult, edge *Edge) {
 	mu.Lock()
 	result.Edges = append(result.Edges, edge)
 	mu.Unlock()
+}
+
+func edgeOccurrence(pkg *packages.Package, node ast.Node) EdgeOccurrence {
+	if pkg == nil || node == nil {
+		return EdgeOccurrence{}
+	}
+	pos := pkg.Fset.Position(node.Pos())
+	return EdgeOccurrence{
+		FilePath: pos.Filename,
+		Line:     pos.Line,
+		Column:   pos.Column,
+	}
 }
 
 func calledObjectFromCall(pkg *packages.Package, call *ast.CallExpr) types.Object {

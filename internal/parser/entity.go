@@ -54,10 +54,17 @@ const (
 
 // Edge represents a relation between two nodes
 type Edge struct {
-	From   string
-	To     string
-	Type   EdgeType
-	RepoID string // The ID of the repository that discovered this edge
+	From        string
+	To          string
+	Type        EdgeType
+	RepoID      string           // The ID of the repository that discovered this edge
+	Occurrences []EdgeOccurrence `json:"occurrences,omitempty"`
+}
+
+type EdgeOccurrence struct {
+	FilePath string `json:"filepath,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Column   int    `json:"column,omitempty"`
 }
 
 // Memory Optimization: Object pools for Node and Edge

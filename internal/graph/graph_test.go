@@ -58,6 +58,49 @@ func TestGraphConstructionAndQuery(t *testing.T) {
 	assert.Equal(t, "chanC", flows[0].ID)
 }
 
+func TestAddEdgeMergesCallOccurrences(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	_, err := g.AddNode(ctx, &parser.Node{ID: "funcA", Type: parser.NodeTypeFunc, Name: "FuncA"})
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "funcB", Type: parser.NodeTypeFunc, Name: "FuncB"})
+	require.NoError(t, err)
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: "funcA",
+		To:   "funcB",
+		Type: parser.EdgeTypeCalls,
+		Occurrences: []parser.EdgeOccurrence{
+			{FilePath: "main.go", Line: 10, Column: 2},
+		},
+	}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: "funcA",
+		To:   "funcB",
+		Type: parser.EdgeTypeCalls,
+		Occurrences: []parser.EdgeOccurrence{
+			{FilePath: "main.go", Line: 12, Column: 2},
+		},
+	}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: "funcA",
+		To:   "funcB",
+		Type: parser.EdgeTypeCalls,
+		Occurrences: []parser.EdgeOccurrence{
+			{FilePath: "main.go", Line: 12, Column: 2},
+		},
+	}))
+
+	fromID := g.nodeMap["funcA"]
+	toID := g.nodeMap["funcB"]
+	require.Len(t, g.edges[fromID][toID], 1)
+	assert.ElementsMatch(t, []parser.EdgeOccurrence{
+		{FilePath: "main.go", Line: 10, Column: 2},
+		{FilePath: "main.go", Line: 12, Column: 2},
+	}, g.edges[fromID][toID][0].Occurrences)
+}
+
 func TestConcurrencyGraphIncludesGoroutinesAndChannels(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

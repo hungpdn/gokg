@@ -101,6 +101,29 @@ func TestExportDot(t *testing.T) {
 	assert.Contains(t, dot, "\"A\" -> \"B\" [label=\"CALLS\"];")
 }
 
+func TestExportDotIncludesCallOccurrences(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+
+	_, err := g.AddNode(ctx, &parser.Node{ID: "A", Name: "A"})
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "B", Name: "B"})
+	require.NoError(t, err)
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: "A",
+		To:   "B",
+		Type: parser.EdgeTypeCalls,
+		Occurrences: []parser.EdgeOccurrence{
+			{FilePath: "main.go", Line: 10, Column: 2},
+			{FilePath: "main.go", Line: 12, Column: 4},
+		},
+	}))
+
+	dot := g.ExportDot()
+	assert.Contains(t, dot, "\"A\" -> \"B\" [label=\"CALLS\", occurrences=\"2\", lines=\"main.go:10:2,main.go:12:4\"];")
+}
+
 func TestExportJSON(t *testing.T) {
 	g := NewGraph(nil)
 	ctx := context.Background()

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/hungpdn/gokg/internal/parser"
 )
 
 // ExportJSON exports the graph to JSON format.
@@ -71,23 +73,50 @@ func (g *Graph) ExportDot() string {
 	b.WriteString("  node [shape=box];\n")
 
 	safeID := func(id string) string {
-		return fmt.Sprintf("\"%s\"", strings.ReplaceAll(id, "\"", "\\\""))
+		return dotQuote(id)
 	}
 
 	for _, node := range g.nodes {
-		b.WriteString(fmt.Sprintf("  %s [label=\"%s\"];\n", safeID(node.ID), nodeLabel(node.Name, string(node.Type))))
+		b.WriteString(fmt.Sprintf("  %s [label=%s];\n", safeID(node.ID), dotQuote(nodeLabel(node.Name, string(node.Type)))))
 	}
 
 	for _, edgeMap := range g.edges {
 		for _, edges := range edgeMap {
 			for _, edge := range edges {
-				b.WriteString(fmt.Sprintf("  %s -> %s [label=\"%s\"];\n", safeID(edge.From), safeID(edge.To), edge.Type))
+				b.WriteString(fmt.Sprintf("  %s -> %s %s;\n", safeID(edge.From), safeID(edge.To), dotEdgeAttrs(edge)))
 			}
 		}
 	}
 
 	b.WriteString("}\n")
 	return b.String()
+}
+
+func dotEdgeAttrs(edge *parser.Edge) string {
+	attrs := []string{fmt.Sprintf("label=%s", dotQuote(string(edge.Type)))}
+	if len(edge.Occurrences) > 0 {
+		attrs = append(attrs, fmt.Sprintf("occurrences=%s", dotQuote(fmt.Sprint(len(edge.Occurrences)))))
+		attrs = append(attrs, fmt.Sprintf("lines=%s", dotQuote(edgeOccurrenceLines(edge.Occurrences))))
+	}
+	return "[" + strings.Join(attrs, ", ") + "]"
+}
+
+func edgeOccurrenceLines(occurrences []parser.EdgeOccurrence) string {
+	lines := make([]string, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		lines = append(lines, fmt.Sprintf("%s:%d:%d", occurrence.FilePath, occurrence.Line, occurrence.Column))
+	}
+	return strings.Join(lines, ",")
+}
+
+func dotQuote(s string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		`"`, `\"`,
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+	return `"` + replacer.Replace(s) + `"`
 }
 
 func nodeLabel(name, nodeType string) string {

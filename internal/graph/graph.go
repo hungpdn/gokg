@@ -126,6 +126,11 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	}
 	for _, edge := range g.edges[fromID][toID] {
 		if edge.Type == pEdge.Type {
+			if mergeEdgeOccurrences(edge, pEdge) {
+				if err := g.persistEdge(ctx, edge); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 	}
@@ -140,6 +145,31 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	g.directed.SetEdge(gEdge)
 
 	return nil
+}
+
+func mergeEdgeOccurrences(existing, candidate *parser.Edge) bool {
+	if existing == nil || candidate == nil || len(candidate.Occurrences) == 0 {
+		return false
+	}
+
+	changed := false
+	for _, occurrence := range candidate.Occurrences {
+		if hasEdgeOccurrence(existing.Occurrences, occurrence) {
+			continue
+		}
+		existing.Occurrences = append(existing.Occurrences, occurrence)
+		changed = true
+	}
+	return changed
+}
+
+func hasEdgeOccurrence(occurrences []parser.EdgeOccurrence, candidate parser.EdgeOccurrence) bool {
+	for _, occurrence := range occurrences {
+		if occurrence == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildFromParseResult builds the graph from the parse result
