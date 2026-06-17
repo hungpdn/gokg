@@ -39,6 +39,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
+		Tests:   true,
 	}
 
 	pkgs, err := packages.Load(cfg, "./...")
@@ -48,6 +49,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	if packages.PrintErrors(pkgs) > 0 {
 		return nil, fmt.Errorf("encountered errors during package loading")
 	}
+	pkgs = selectGraphPackages(pkgs)
 
 	result := &ParseResult{
 		Nodes: make([]*Node, 0),
@@ -70,12 +72,13 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 				return err
 			}
 
-			isInternal := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
+			pkgPath := packageGraphPath(pkg)
+			isInternal := isInternalPackage(pkgPath, p.ModulePrefix)
 
 			node := NewNode()
-			node.ID = pkg.PkgPath
+			node.ID = pkgPath
 			node.Name = pkg.Name
-			node.PkgPath = pkg.PkgPath
+			node.PkgPath = pkgPath
 			node.RepoID = p.RepoID
 
 			if !isInternal {
@@ -191,7 +194,8 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 	packageFolders := make(map[string]map[string]bool)
 
 	for _, pkg := range pkgs {
-		if !isInternalPackage(pkg.PkgPath, p.ModulePrefix) {
+		pkgPath := packageGraphPath(pkg)
+		if !isInternalPackage(pkgPath, p.ModulePrefix) {
 			continue
 		}
 
@@ -224,7 +228,7 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 			if packageFolders[folderID] == nil {
 				packageFolders[folderID] = make(map[string]bool)
 			}
-			packageFolders[folderID][pkg.PkgPath] = true
+			packageFolders[folderID][pkgPath] = true
 		}
 	}
 
@@ -303,6 +307,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
+		Tests:   true,
 	}
 
 	pkgs, err := packages.Load(cfg, ".")
@@ -312,6 +317,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 	if packages.PrintErrors(pkgs) > 0 {
 		return nil, fmt.Errorf("encountered errors during package loading")
 	}
+	pkgs = selectGraphPackages(pkgs)
 
 	result := &ParseResult{
 		Nodes: make([]*Node, 0),
@@ -325,12 +331,13 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 			return nil, err
 		}
 
-		isInternal := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
+		pkgPath := packageGraphPath(pkg)
+		isInternal := isInternalPackage(pkgPath, p.ModulePrefix)
 
 		node := NewNode()
-		node.ID = pkg.PkgPath
+		node.ID = pkgPath
 		node.Name = pkg.Name
-		node.PkgPath = pkg.PkgPath
+		node.PkgPath = pkgPath
 		node.RepoID = p.RepoID
 
 		if !isInternal {
@@ -370,12 +377,13 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 
 	var collect func(pkg *packages.Package)
 	collect = func(pkg *packages.Package) {
-		if pkg == nil || pkg.Types == nil || visited[pkg.PkgPath] {
+		pkgPath := packageGraphPath(pkg)
+		if pkg == nil || pkg.Types == nil || visited[pkgPath] {
 			return
 		}
-		visited[pkg.PkgPath] = true
+		visited[pkgPath] = true
 
-		isWorkspacePkg := isInternalPackage(pkg.PkgPath, p.ModulePrefix)
+		isWorkspacePkg := isInternalPackage(pkgPath, p.ModulePrefix)
 		scope := pkg.Types.Scope()
 		for _, name := range scope.Names() {
 			obj := scope.Lookup(name)
@@ -389,7 +397,7 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 				if named, ok := typeName.Type().(*types.Named); ok {
 					var pkgPath string
 					if obj.Pkg() != nil {
-						pkgPath = obj.Pkg().Path()
+						pkgPath = normalizePackagePath(obj.Pkg().Path())
 					}
 					id := BuildID(pkgPath, ".", obj.Name())
 
@@ -429,7 +437,71 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 	}
 }
 
+func selectGraphPackages(pkgs []*packages.Package) []*packages.Package {
+	selected := make(map[string]*packages.Package)
+	order := make([]string, 0, len(pkgs))
+
+	for _, pkg := range pkgs {
+		if pkg == nil || isSyntheticTestPackage(pkg) {
+			continue
+		}
+
+		pkgPath := packageGraphPath(pkg)
+		if pkgPath == "" {
+			continue
+		}
+
+		if _, ok := selected[pkgPath]; !ok {
+			order = append(order, pkgPath)
+			selected[pkgPath] = pkg
+			continue
+		}
+		if shouldPreferGraphPackage(pkg, selected[pkgPath]) {
+			selected[pkgPath] = pkg
+		}
+	}
+
+	result := make([]*packages.Package, 0, len(order))
+	for _, pkgPath := range order {
+		result = append(result, selected[pkgPath])
+	}
+	return result
+}
+
+func shouldPreferGraphPackage(candidate, current *packages.Package) bool {
+	if current == nil {
+		return true
+	}
+	if candidate.ForTest != "" && current.ForTest == "" {
+		return true
+	}
+	return len(candidate.Syntax) > len(current.Syntax)
+}
+
+func isSyntheticTestPackage(pkg *packages.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	pkgPath := normalizePackagePath(pkg.PkgPath)
+	return strings.HasSuffix(pkgPath, ".test")
+}
+
+func packageGraphPath(pkg *packages.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	return normalizePackagePath(pkg.PkgPath)
+}
+
+func normalizePackagePath(pkgPath string) string {
+	if idx := strings.Index(pkgPath, " ["); idx > 0 && strings.HasSuffix(pkgPath, "]") {
+		return pkgPath[:idx]
+	}
+	return pkgPath
+}
+
 func isInternalPackage(pkgPath, modulePrefix string) bool {
+	pkgPath = normalizePackagePath(pkgPath)
 	modulePrefix = strings.TrimSpace(modulePrefix)
 	if modulePrefix == "" {
 		return false

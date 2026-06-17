@@ -123,6 +123,80 @@ func process(ch chan int) {
 	assert.False(t, hasEdge(result, startID, processID, EdgeTypeSpawns), "SPAWNS should target the goroutine node, not the callee")
 }
 
+func TestParseWorkspaceCapturesTopLevelSymbolsAndTests(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/inventory\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "model.go"), `package inventory
+
+type Status string
+type Alias = Item
+
+const StatusReady Status = "ready"
+
+var DefaultItem = Item{Status: StatusReady}
+
+type Item struct {
+	Status Status
+}
+
+func (i Item) Ready() bool {
+	return i.Status == StatusReady
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "model_test.go"), `package inventory
+
+import "testing"
+
+func TestReady(t *testing.T) {
+	_ = DefaultItem.Ready()
+}
+`)
+
+	parser := NewParser("example.com/inventory", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	nodes := nodesByID(result)
+	pkgID := "example.com/inventory"
+	statusID := pkgID + ".Status"
+	aliasID := pkgID + ".Alias"
+	statusReadyID := pkgID + ".StatusReady"
+	defaultItemID := pkgID + ".DefaultItem"
+	itemID := pkgID + ".Item"
+	readyID := pkgID + "." + pkgID + ".Item.Ready"
+	testReadyID := pkgID + ".TestReady"
+	modelFile := filepath.Join(dir, "model.go")
+	testFile := filepath.Join(dir, "model_test.go")
+
+	require.NotNil(t, nodes[statusID])
+	assert.Equal(t, NodeTypeTypeAlias, nodes[statusID].Type)
+	require.NotNil(t, nodes[aliasID])
+	assert.Equal(t, NodeTypeTypeAlias, nodes[aliasID].Type)
+	require.NotNil(t, nodes[statusReadyID])
+	assert.Equal(t, NodeTypeConstant, nodes[statusReadyID].Type)
+	require.NotNil(t, nodes[defaultItemID])
+	assert.Equal(t, NodeTypeVariable, nodes[defaultItemID].Type)
+	require.NotNil(t, nodes[itemID])
+	assert.Equal(t, NodeTypeStruct, nodes[itemID].Type)
+	require.NotNil(t, nodes[testReadyID])
+	assert.Equal(t, NodeTypeFunc, nodes[testReadyID].Type)
+	require.NotNil(t, nodes[testFile], "test files should be included in workspace parsing")
+	assert.Equal(t, NodeTypeFile, nodes[testFile].Type)
+
+	assert.True(t, hasEdge(result, modelFile, statusID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, modelFile, statusReadyID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, modelFile, defaultItemID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, testFile, testReadyID, EdgeTypeContains))
+	assert.True(t, hasEdge(result, aliasID, itemID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, statusReadyID, statusID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, defaultItemID, itemID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, defaultItemID, itemID, EdgeTypeInstantiates))
+	assert.True(t, hasEdge(result, defaultItemID, statusReadyID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, testReadyID, readyID, EdgeTypeCalls))
+}
+
 func TestParseWorkspaceAddsWorkspaceRepoHierarchy(t *testing.T) {
 	withGoBuildCache(t)
 

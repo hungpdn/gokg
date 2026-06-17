@@ -16,6 +16,7 @@ import (
 func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Package, mu *sync.Mutex, result *ParseResult) error {
 	createdChannels := make(map[string]bool)
 	createdBoundaryNodes := make(map[string]bool)
+	pkgPath := packageGraphPath(pkg)
 
 	for _, file := range pkg.Syntax {
 		if err := ctx.Err(); err != nil {
@@ -30,11 +31,11 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 			Type:     NodeTypeFile,
 			Name:     filepath.Base(filename),
 			FilePath: filename,
-			PkgPath:  pkg.PkgPath,
+			PkgPath:  pkgPath,
 			RepoID:   p.RepoID,
 		})
 		appendEdge(mu, result, &Edge{
-			From:   pkg.PkgPath,
+			From:   pkgPath,
 			To:     filename,
 			Type:   EdgeTypeContains,
 			RepoID: p.RepoID,
@@ -62,9 +63,11 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 			switch node := decl.(type) {
 			case *ast.GenDecl:
 				for _, spec := range node.Specs {
-					typeSpec, ok := spec.(*ast.TypeSpec)
-					if ok {
-						p.extractTypeSpec(pkg, filename, typeSpec, mu, result)
+					switch spec := spec.(type) {
+					case *ast.TypeSpec:
+						p.extractTypeSpec(pkg, filename, spec, mu, result)
+					case *ast.ValueSpec:
+						p.extractValueSpec(pkg, filename, node.Tok, spec, mu, result)
 					}
 				}
 			case *ast.FuncDecl:
@@ -83,7 +86,7 @@ func (p *Parser) extractTypeSpec(pkg *packages.Package, filename string, node *a
 
 	var pkgPath string
 	if obj.Pkg() != nil {
-		pkgPath = obj.Pkg().Path()
+		pkgPath = normalizePackagePath(obj.Pkg().Path())
 	}
 	typeID := BuildID(pkgPath, ".", obj.Name())
 
@@ -103,8 +106,7 @@ func (p *Parser) extractTypeSpec(pkg *packages.Package, filename string, node *a
 	} else if _, ok := node.Type.(*ast.InterfaceType); ok {
 		tNode.Type = NodeTypeInterface
 	} else {
-		ReleaseNode(tNode)
-		return
+		tNode.Type = NodeTypeTypeAlias
 	}
 
 	appendNode(mu, result, tNode)
@@ -114,6 +116,63 @@ func (p *Parser) extractTypeSpec(pkg *packages.Package, filename string, node *a
 		Type:   EdgeTypeContains,
 		RepoID: p.RepoID,
 	})
+	p.addTypeReferenceEdges(typeID, pkg.TypesInfo.TypeOf(node.Type), mu, result)
+	p.addTypeReferenceEdges(typeID, obj.Type(), mu, result)
+	p.addTypeReferenceEdges(typeID, obj.Type().Underlying(), mu, result)
+}
+
+func (p *Parser) extractValueSpec(
+	pkg *packages.Package,
+	filename string,
+	tok token.Token,
+	node *ast.ValueSpec,
+	mu *sync.Mutex,
+	result *ParseResult,
+) {
+	for _, name := range node.Names {
+		if name.Name == "_" {
+			continue
+		}
+
+		obj := pkg.TypesInfo.Defs[name]
+		if obj == nil {
+			continue
+		}
+		if !isPackageScopeObject(obj) {
+			continue
+		}
+
+		var pkgPath string
+		if obj.Pkg() != nil {
+			pkgPath = normalizePackagePath(obj.Pkg().Path())
+		}
+		symbolID := BuildID(pkgPath, ".", obj.Name())
+
+		valueNode := NewNode()
+		valueNode.ID = symbolID
+		valueNode.Type = nodeTypeForValue(tok)
+		valueNode.Name = obj.Name()
+		valueNode.PkgPath = pkgPath
+		valueNode.FilePath = filename
+		valueNode.Lines = [2]int{
+			pkg.Fset.Position(name.Pos()).Line,
+			pkg.Fset.Position(node.End()).Line,
+		}
+		valueNode.RepoID = p.RepoID
+
+		appendNode(mu, result, valueNode)
+		appendEdge(mu, result, &Edge{
+			From:   filename,
+			To:     symbolID,
+			Type:   EdgeTypeContains,
+			RepoID: p.RepoID,
+		})
+		p.addTypeReferenceEdges(symbolID, obj.Type(), mu, result)
+
+		for _, value := range node.Values {
+			p.addExpressionReferenceEdges(pkg, symbolID, value, mu, result)
+		}
+	}
 }
 
 func (p *Parser) extractFuncDecl(
@@ -146,7 +205,7 @@ func (p *Parser) extractFuncDecl(
 	fnNode.ID = funcID
 	fnNode.Type = nodeType
 	fnNode.Name = obj.Name()
-	fnNode.PkgPath = pkg.PkgPath
+	fnNode.PkgPath = packageGraphPath(pkg)
 	fnNode.FilePath = filename
 	fnNode.Lines = [2]int{
 		pkg.Fset.Position(node.Pos()).Line,
@@ -258,7 +317,7 @@ func (p *Parser) addGoroutineEdges(
 		ID:       goroutineID,
 		Type:     NodeTypeGoroutine,
 		Name:     fmt.Sprintf("goroutine_L%d", line),
-		PkgPath:  pkg.PkgPath,
+		PkgPath:  packageGraphPath(pkg),
 		FilePath: filename,
 		Lines:    [2]int{line, line},
 		RepoID:   p.RepoID,
@@ -328,6 +387,9 @@ func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mut
 	collectGraphTypeIDs(typ, typeIDs)
 
 	for typeID, pkgPath := range typeIDs {
+		if typeID == from {
+			continue
+		}
 		if !isInternalPackage(pkgPath, p.ModulePrefix) {
 			continue
 		}
@@ -338,6 +400,50 @@ func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mut
 			RepoID: p.RepoID,
 		})
 	}
+}
+
+func (p *Parser) addExpressionReferenceEdges(pkg *packages.Package, from string, expr ast.Expr, mu *sync.Mutex, result *ParseResult) {
+	seen := make(map[string]bool)
+
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
+
+		switch node := n.(type) {
+		case *ast.CompositeLit:
+			typ := pkg.TypesInfo.TypeOf(node)
+			p.addTypeReferenceEdges(from, typ, mu, result)
+			p.addInstantiationEdge(from, typ, mu, result)
+		case *ast.Ident:
+			p.addObjectReferenceEdge(from, pkg.TypesInfo.Uses[node], seen, mu, result)
+		case *ast.SelectorExpr:
+			if selection := pkg.TypesInfo.Selections[node]; selection != nil {
+				p.addObjectReferenceEdge(from, selection.Obj(), seen, mu, result)
+			}
+			p.addObjectReferenceEdge(from, pkg.TypesInfo.Uses[node.Sel], seen, mu, result)
+		}
+
+		return true
+	})
+}
+
+func (p *Parser) addObjectReferenceEdge(from string, obj types.Object, seen map[string]bool, mu *sync.Mutex, result *ParseResult) {
+	id, pkgPath, ok := graphObjectID(obj)
+	if !ok || id == from || seen[id] {
+		return
+	}
+	if !isInternalPackage(pkgPath, p.ModulePrefix) {
+		return
+	}
+
+	seen[id] = true
+	appendEdge(mu, result, &Edge{
+		From:   from,
+		To:     id,
+		Type:   EdgeTypeReferences,
+		RepoID: p.RepoID,
+	})
 }
 
 // resolveChannelNode extracts or creates a CHANNEL node from a channel expression.
@@ -391,8 +497,8 @@ func (p *Parser) resolveChannelNode(
 		appendNode(mu, result, &Node{
 			ID:       chanID,
 			Type:     NodeTypeChannel,
-			Name:     fmt.Sprintf("%s (%s)", chanName, chanType.String()),
-			PkgPath:  pkg.PkgPath,
+			Name:     fmt.Sprintf("%s (%s)", chanName, graphTypeString(chanType)),
+			PkgPath:  packageGraphPath(pkg),
 			FilePath: filename,
 			RepoID:   p.RepoID,
 		})
@@ -415,6 +521,7 @@ func (p *Parser) ensureFunctionBoundaryNode(obj types.Object, id string, created
 	}
 
 	pkgPath := fn.Pkg().Path()
+	pkgPath = normalizePackagePath(pkgPath)
 	if isInternalPackage(pkgPath, p.ModulePrefix) {
 		return
 	}
@@ -475,11 +582,11 @@ func getFuncID(calledObj types.Object) string {
 
 	var pkgPath string
 	if fn.Pkg() != nil {
-		pkgPath = fn.Pkg().Path()
+		pkgPath = normalizePackagePath(fn.Pkg().Path())
 	}
 	funcID := BuildID(pkgPath, ".", fn.Name())
 	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
-		funcID = BuildID(pkgPath, ".", sig.Recv().Type().String(), ".", fn.Name())
+		funcID = BuildID(pkgPath, ".", graphTypeString(sig.Recv().Type()), ".", fn.Name())
 	}
 	return funcID
 }
@@ -506,13 +613,42 @@ func graphTypeID(typ types.Type) (string, string, bool) {
 		return "", "", false
 	}
 
-	switch named.Underlying().(type) {
-	case *types.Struct, *types.Interface:
-		pkgPath := named.Obj().Pkg().Path()
-		return BuildID(pkgPath, ".", named.Obj().Name()), pkgPath, true
+	pkgPath := normalizePackagePath(named.Obj().Pkg().Path())
+	return BuildID(pkgPath, ".", named.Obj().Name()), pkgPath, true
+}
+
+func graphObjectID(obj types.Object) (string, string, bool) {
+	if obj == nil || !isPackageScopeObject(obj) {
+		return "", "", false
+	}
+
+	switch obj.(type) {
+	case *types.Const, *types.TypeName, *types.Var:
 	default:
 		return "", "", false
 	}
+
+	pkgPath := normalizePackagePath(obj.Pkg().Path())
+	return BuildID(pkgPath, ".", obj.Name()), pkgPath, true
+}
+
+func isPackageScopeObject(obj types.Object) bool {
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	return obj.Parent() == obj.Pkg().Scope()
+}
+
+func graphTypeString(typ types.Type) string {
+	if typ == nil {
+		return ""
+	}
+	return types.TypeString(typ, func(pkg *types.Package) string {
+		if pkg == nil {
+			return ""
+		}
+		return normalizePackagePath(pkg.Path())
+	})
 }
 
 func collectGraphTypeIDs(typ types.Type, out map[string]string) {
@@ -554,6 +690,13 @@ func collectTupleGraphTypeIDs(tuple *types.Tuple, out map[string]string) {
 	for i := 0; i < tuple.Len(); i++ {
 		collectGraphTypeIDs(tuple.At(i).Type(), out)
 	}
+}
+
+func nodeTypeForValue(tok token.Token) NodeType {
+	if tok == token.CONST {
+		return NodeTypeConstant
+	}
+	return NodeTypeVariable
 }
 
 func boundaryName(id string) string {
