@@ -301,8 +301,6 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 		}
 	}
 
-	var edgesData [][]byte
-
 	// Temporarily unset stores so AddNode and AddEdge don't write back to DB
 	store := g.store
 	repoStores := g.repoStores
@@ -313,6 +311,7 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 		g.repoStores = repoStores
 	}()
 
+	// First pass: load all nodes
 	for _, store := range stores {
 		err := store.Iterate(ctx, func(key []byte, value []byte) error {
 			keyStr := string(key)
@@ -322,24 +321,32 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 					return err
 				}
 				_, _ = g.AddNode(ctx, &pNode)
-			} else if strings.HasPrefix(keyStr, "edge:") {
-				// Copy the value as Badger reuses the slice
-				edgesData = append(edgesData, append([]byte(nil), value...))
 			}
 			return nil
 		})
 
 		if err != nil {
-			return fmt.Errorf("failed to iterate storage: %w", err)
+			return fmt.Errorf("failed to iterate storage for nodes: %w", err)
 		}
 	}
 
-	for _, data := range edgesData {
-		var pEdge parser.Edge
-		if err := json.Unmarshal(data, &pEdge); err != nil {
-			return err
+	// Second pass: load all edges
+	for _, store := range stores {
+		err := store.Iterate(ctx, func(key []byte, value []byte) error {
+			keyStr := string(key)
+			if strings.HasPrefix(keyStr, "edge:") {
+				var pEdge parser.Edge
+				if err := json.Unmarshal(value, &pEdge); err != nil {
+					return err
+				}
+				_ = g.AddEdge(ctx, &pEdge)
+			}
+			return nil
+		})
+
+		if err != nil {
+			return fmt.Errorf("failed to iterate storage for edges: %w", err)
 		}
-		_ = g.AddEdge(ctx, &pEdge)
 	}
 
 	return nil

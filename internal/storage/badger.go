@@ -46,7 +46,10 @@ func badgerOptions(path string) badger.Options {
 		WithLogger(nil). // Disable default logger for cleaner CLI output
 		WithMemTableSize(badgerMemTableSize).
 		WithValueLogFileSize(badgerValueLogFileSize).
-		WithValueThreshold(badgerValueThreshold)
+		WithValueThreshold(badgerValueThreshold).
+		WithBlockCacheSize(16 << 20). // 16 MB block cache (default is 256MB)
+		WithIndexCacheSize(16 << 20). // 16 MB index cache (default is 0, unbounded)
+		WithBypassLockGuard(false)
 	return opts
 }
 

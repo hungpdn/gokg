@@ -307,6 +307,8 @@ func isInsideWorkspace(rel string) bool {
 }
 
 // ParsePackage parses a single package directory and returns its entities.
+// It loads full transitive dependencies (NeedDeps) to resolve cross-package
+// type information. Prefer ParsePackageIncremental for watch-mode updates.
 func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
@@ -362,6 +364,72 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 
 	// Post-processing: IMPLEMENTS edges
 	p.resolveImplementsEdges(pkgs, result)
+
+	return result, nil
+}
+
+// ParsePackageIncremental parses a single package for watch-mode incremental
+// updates. It intentionally omits NeedDeps to avoid loading hundreds of
+// transitive dependency packages into memory on every file save, keeping the
+// RAM footprint low. Cross-package IMPLEMENTS edges are not resolved here as
+// they require full dependency info; those edges remain from the last full
+// analysis run.
+func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*ParseResult, error) {
+	cfg := &packages.Config{
+		// NeedDeps intentionally omitted — avoids loading all transitive deps.
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+		Context: ctx,
+		Dir:     dir,
+		Tests:   p.IncludeTests,
+	}
+
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		return nil, fmt.Errorf("packages.Load failed: %w", err)
+	}
+	// Tolerate errors from missing dependency type info in incremental mode.
+	pkgs = selectGraphPackages(pkgs)
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("no packages found in %s", dir)
+	}
+
+	result := &ParseResult{
+		Nodes: make([]*Node, 0),
+		Edges: make([]*Edge, 0),
+	}
+
+	var mu sync.Mutex
+
+	for _, pkg := range pkgs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		pkgPath := packageGraphPath(pkg)
+		isInternal := isInternalPackage(pkgPath, p.ModulePrefix)
+
+		node := NewNode()
+		node.ID = pkgPath
+		node.Name = pkg.Name
+		node.PkgPath = pkgPath
+		node.RepoID = p.RepoID
+
+		if !isInternal {
+			node.Type = NodeTypeBoundary
+			result.Nodes = append(result.Nodes, node)
+			continue
+		}
+
+		node.Type = NodeTypePackage
+		result.Nodes = append(result.Nodes, node)
+
+		if pkg.TypesInfo != nil {
+			if err := p.extractPackageEntities(ctx, pkg, &mu, result); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	return result, nil
 }

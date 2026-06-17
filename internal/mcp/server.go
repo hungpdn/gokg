@@ -357,7 +357,7 @@ func formatNodeListMarkdown(title, nodeID string, nodes []*parser.Node) string {
 
 	b.WriteString(fmt.Sprintf("Found **%d** node(s):\n\n", len(nodes)))
 	for _, n := range nodes {
-		b.WriteString(fmt.Sprintf("- **`%s`** (`%s`)", n.Name, n.Type))
+		b.WriteString(fmt.Sprintf("- **`%s`** (`%s`) — ID: `%s`", n.Name, n.Type, n.ID))
 		if n.FilePath != "" && n.Lines[0] > 0 {
 			b.WriteString(fmt.Sprintf(" — `%s` L%d-%d", n.FilePath, n.Lines[0], n.Lines[1]))
 		} else if n.PkgPath != "" {

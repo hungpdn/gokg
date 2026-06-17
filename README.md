@@ -168,6 +168,44 @@ Full reference: [docs/cypher-reference.md](docs/cypher-reference.md)
 
 ---
 
+## Integrating with AI Agents
+
+Because GoKG exposes an MCP server over standard input/output (`stdio`), you can easily connect it to AI clients like Claude Desktop, Cursor, or VSCode extensions (Cline, Roo Code).
+
+### Claude Desktop
+Add this to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "gokg": {
+      "command": "gokg",
+      "args": ["mcp", "--watch"],
+      "cwd": "/path/to/your/go/project"
+    }
+  }
+}
+```
+
+### Cursor IDE
+1. Open Settings -> Features -> MCP
+2. Click **Add Server**
+3. Set Name to `GoKG`, Type to `stdio`, and Command to `gokg mcp --watch`
+
+### VSCode (Cline / Roo Code)
+Add this to the agent's `mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "gokg": {
+      "command": "gokg",
+      "args": ["mcp", "--watch"]
+    }
+  }
+}
+```
+
+---
+
 ## How AI Agents Use GoKG
 
 A typical workflow:

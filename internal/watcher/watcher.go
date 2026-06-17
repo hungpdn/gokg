@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -156,8 +157,9 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 	pkgPath := pkgs[0].PkgPath
 
 	// Reparse before mutating the graph so a transient parse failure does not
-	// erase the previous package snapshot.
-	res, err := w.p.ParsePackage(ctx, dir)
+	// erase the previous package snapshot. Use the lightweight incremental
+	// mode to avoid pulling in all transitive dependencies on every file save.
+	res, err := w.p.ParsePackageIncremental(ctx, dir)
 	if err != nil {
 		log.Printf("Error reparsing package %s: %v", pkgPath, err)
 		return
@@ -177,4 +179,7 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 	}
 
 	log.Printf("Successfully updated graph for package: %s", pkgPath)
+
+	// Aggressively release memory back to the OS after a heavy package parse
+	debug.FreeOSMemory()
 }
