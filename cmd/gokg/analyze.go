@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"text/tabwriter"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
@@ -38,7 +41,9 @@ func newAnalyzeCommand() *cobra.Command {
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
-	fmt.Println("Starting analysis...")
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Starting analysis...")
+	startedAt := time.Now()
 	ctx := context.Background()
 
 	workspaceName, _ := cmd.Flags().GetString("workspace")
@@ -64,7 +69,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if err := rebuildBadgerDBPath(dbPath, cmd.Flags().Changed("db")); err != nil {
 			return err
 		}
-		fmt.Printf("Rebuilding local database at %s...\n", dbPath)
+		fmt.Fprintf(out, "Rebuilding local database at %s...\n", dbPath)
 	}
 
 	// Init Storage
@@ -85,14 +90,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Parse Workspace
 	p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
 	if filepath.Clean(analysisRoot.Dir) != filepath.Clean(dir) {
-		fmt.Printf("Analyzing Go module at %s\n", analysisRoot.Dir)
+		fmt.Fprintf(out, "Analyzing Go module at %s\n", analysisRoot.Dir)
 	}
 	result, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
 		return fmt.Errorf("parse workspace failed: %w", err)
 	}
-
-	fmt.Printf("Parsed %d nodes and %d edges\n", len(result.Nodes), len(result.Edges))
 
 	// Build Graph
 	g := graph.NewGraph(store)
@@ -109,7 +112,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("Analysis complete and saved to %s\n", dbPath)
+	if err := printAnalyzeGraphSummary(out, "Graph Summary", g.Stats(), dbPath, time.Since(startedAt)); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Analysis complete.")
 	return nil
 }
 
@@ -118,9 +124,13 @@ type workspaceAnalysisResult struct {
 	DBPath string
 	Nodes  int
 	Edges  int
+	Time   time.Duration
 }
 
 func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName string) error {
+	out := cmd.OutOrStdout()
+	startedAt := time.Now()
+
 	if cmd.Flags().Changed("db") {
 		return fmt.Errorf("--db cannot be used with --workspace; workspace mode stores each repo in its own database")
 	}
@@ -142,7 +152,7 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	runGC, _ := cmd.Flags().GetBool("gc")
 	includeTests, _ := cmd.Flags().GetBool("tests")
 
-	fmt.Printf("Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos))
+	fmt.Fprintf(out, "Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos))
 
 	var mu sync.Mutex
 	results := make([]workspaceAnalysisResult, 0, len(repos))
@@ -169,10 +179,10 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].RepoID < results[j].RepoID
 	})
-	for _, result := range results {
-		fmt.Printf("Repo %q: parsed %d nodes and %d edges, saved to %s\n", result.RepoID, result.Nodes, result.Edges, result.DBPath)
+	if err := printWorkspaceAnalyzeSummary(out, ws.Name, results, time.Since(startedAt)); err != nil {
+		return err
 	}
-	fmt.Printf("Workspace analysis complete for %q\n", ws.Name)
+	fmt.Fprintln(out, "Workspace analysis complete.")
 	return nil
 }
 
@@ -184,6 +194,8 @@ func analyzeWorkspaceRepo(
 	runGC bool,
 	includeTests bool,
 ) (workspaceAnalysisResult, error) {
+	startedAt := time.Now()
+
 	stat, err := os.Stat(repo.Path)
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("repo %q path is not accessible: %w", repo.ID, err)
@@ -234,12 +246,81 @@ func analyzeWorkspaceRepo(
 		}
 	}
 
+	stats := g.Stats()
 	return workspaceAnalysisResult{
 		RepoID: repo.ID,
 		DBPath: dbPath,
-		Nodes:  len(result.Nodes),
-		Edges:  len(result.Edges),
+		Nodes:  stats.NodeCount,
+		Edges:  stats.EdgeCount,
+		Time:   time.Since(startedAt),
 	}, nil
+}
+
+func printAnalyzeGraphSummary(out io.Writer, title string, stats graph.Stats, dbPath string, duration time.Duration) error {
+	if _, err := fmt.Fprintf(out, "\n%s:\n", title); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "Metric\tValue"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Nodes\t%d\n", stats.NodeCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Edges\t%d\n", stats.EdgeCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Source files\t%d\n", stats.SourceFileCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Analysis time\t%s\n", formatDuration(duration)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Database\t%s\n", dbPath); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	if err := printCountTable(out, "Nodes by Kind", stats.NodesByKind); err != nil {
+		return err
+	}
+	return printCountTable(out, "Edges by Kind", stats.EdgesByKind)
+}
+
+func printWorkspaceAnalyzeSummary(out io.Writer, workspaceName string, results []workspaceAnalysisResult, duration time.Duration) error {
+	if _, err := fmt.Fprintf(out, "\nWorkspace Graph Summary: %s\n", workspaceName); err != nil {
+		return err
+	}
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "Repo\tNodes\tEdges\tTime\tDatabase"); err != nil {
+		return err
+	}
+
+	totalNodes := 0
+	totalEdges := 0
+	for _, result := range results {
+		totalNodes += result.Nodes
+		totalEdges += result.Edges
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\n", result.RepoID, result.Nodes, result.Edges, formatDuration(result.Time), result.DBPath); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "TOTAL\t%d\t%d\t%s\t%d repos\n", totalNodes, totalEdges, formatDuration(duration), len(results)); err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+func formatDuration(duration time.Duration) string {
+	if duration < time.Second {
+		return duration.Round(time.Millisecond).String()
+	}
+	return duration.Round(10 * time.Millisecond).String()
 }
 
 func rebuildBadgerDBPath(dbPath string, explicitDB bool) error {

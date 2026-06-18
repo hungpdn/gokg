@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -25,6 +26,31 @@ func TestAnalyzeUsesDBFlag(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.DirExists(t, dbDir)
 	assert.NoDirExists(t, filepath.Join(projectDir, ".gokg"))
+}
+
+func TestAnalyzePrintsGraphSummary(t *testing.T) {
+	withGoBuildCache(t)
+	projectDir := newTinyGoProject(t)
+	dbDir := filepath.Join(t.TempDir(), "custom-db")
+
+	withWorkingDir(t, projectDir)
+
+	var out bytes.Buffer
+	cmd := newAnalyzeCommand()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--db", dbDir, "--gc=false"})
+
+	require.NoError(t, cmd.Execute())
+
+	output := out.String()
+	assert.Contains(t, output, "Graph Summary:")
+	assert.Contains(t, output, "Nodes")
+	assert.Contains(t, output, "Edges")
+	assert.Contains(t, output, "Analysis time")
+	assert.Contains(t, output, "Nodes by Kind:")
+	assert.Contains(t, output, "Edges by Kind:")
+	assert.Contains(t, output, dbDir)
+	assert.NotContains(t, output, "Parsed ")
 }
 
 func TestAnalyzeTestsFlagDefaultsToFalse(t *testing.T) {
@@ -94,7 +120,9 @@ func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	require.NoError(t, ws.AddRepo("service-a", repoA))
 	require.NoError(t, ws.AddRepo("service-b", repoB))
 
+	var out bytes.Buffer
 	cmd := newAnalyzeCommand()
+	cmd.SetOut(&out)
 	cmd.SetArgs([]string{"--workspace", "demo", "--rebuild", "--gc=false"})
 
 	require.NoError(t, cmd.Execute())
@@ -112,6 +140,15 @@ func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	reopenedStore, err := storage.NewBadgerStorage(ws.GetRepoDBPath("service-a"))
 	require.NoError(t, err)
 	require.NoError(t, reopenedStore.Close())
+
+	output := out.String()
+	assert.Contains(t, output, "Workspace Graph Summary: demo")
+	assert.Contains(t, output, "Repo")
+	assert.Contains(t, output, "Nodes")
+	assert.Contains(t, output, "Edges")
+	assert.Contains(t, output, "Time")
+	assert.Contains(t, output, "TOTAL")
+	assert.NotContains(t, output, "parsed")
 }
 
 func TestAnalyzeWorkspaceRejectsModuleFlag(t *testing.T) {
