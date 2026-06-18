@@ -14,8 +14,16 @@ import (
 )
 
 type ParseResult struct {
-	Nodes []*Node
-	Edges []*Edge
+	Nodes           []*Node
+	Edges           []*Edge
+	channelArgFlows []channelArgFlow
+}
+
+type channelArgFlow struct {
+	CalleeID       string
+	ParamChannelID string
+	ArgChannelID   string
+	RepoID         string
 }
 
 type Parser struct {
@@ -114,6 +122,8 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+
+	p.resolveChannelArgumentFlowEdges(result)
 
 	// Post-processing: IMPLEMENTS edges
 	p.resolveImplementsEdges(pkgs, result)
@@ -362,6 +372,8 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 		}
 	}
 
+	p.resolveChannelArgumentFlowEdges(result)
+
 	// Post-processing: IMPLEMENTS edges
 	p.resolveImplementsEdges(pkgs, result)
 
@@ -430,6 +442,8 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 			}
 		}
 	}
+
+	p.resolveChannelArgumentFlowEdges(result)
 
 	return result, nil
 }

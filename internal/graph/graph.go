@@ -345,7 +345,9 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 				if err := json.Unmarshal(value, &pEdge); err != nil {
 					return err
 				}
-				_ = g.AddEdge(ctx, &pEdge)
+				if err := g.AddEdge(ctx, &pEdge); err != nil && !errors.Is(err, ErrUnknownEdgeEndpoint) {
+					return err
+				}
 			}
 			return nil
 		})

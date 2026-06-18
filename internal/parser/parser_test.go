@@ -480,6 +480,13 @@ func consumer(in <-chan int) {
 	}
 }
 
+func idle(in <-chan int) {}
+
+func relay(ch chan int) {
+	<-ch
+	ch <- 3
+}
+
 func (Worker) Run(in <-chan int, out chan<- int) {
 	<-in
 	out <- 2
@@ -490,6 +497,8 @@ func main() {
 	out := make(chan int)
 	producer(out)
 	consumer(in)
+	idle(in)
+	relay(in)
 	var w Worker
 	w.Run(in, out)
 }
@@ -506,12 +515,51 @@ func main() {
 
 	producerID := "example.com/chargs.producer"
 	consumerID := "example.com/chargs.consumer"
+	idleID := "example.com/chargs.idle"
+	relayID := "example.com/chargs.relay"
 	runID := "example.com/chargs.example.com/chargs.Worker.Run"
 
 	assert.True(t, hasEdge(result, producerID, outChannelID, EdgeTypeSendsTo))
 	assert.True(t, hasEdge(result, consumerID, inChannelID, EdgeTypeReceivesFrom))
+	assert.False(t, hasEdge(result, idleID, inChannelID, EdgeTypeReceivesFrom))
+	assert.True(t, hasEdge(result, relayID, inChannelID, EdgeTypeReceivesFrom))
+	assert.True(t, hasEdge(result, relayID, inChannelID, EdgeTypeSendsTo))
 	assert.True(t, hasEdge(result, runID, inChannelID, EdgeTypeReceivesFrom))
 	assert.True(t, hasEdge(result, runID, outChannelID, EdgeTypeSendsTo))
+}
+
+func TestParseWorkspaceKeepsChannelFieldSelectorsDistinct(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/chfields\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+type box struct {
+	ch chan int
+}
+
+func use() {
+	b1 := box{ch: make(chan int)}
+	b2 := box{ch: make(chan int)}
+	b1.ch <- 1
+	b2.ch <- 2
+}
+`)
+
+	parser := NewParser("example.com/chfields", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	b1ChannelID := channelNodeIDByName(result, "b1.ch (chan int)")
+	b2ChannelID := channelNodeIDByName(result, "b2.ch (chan int)")
+	require.NotEmpty(t, b1ChannelID)
+	require.NotEmpty(t, b2ChannelID)
+	assert.NotEqual(t, b1ChannelID, b2ChannelID)
+
+	useID := "example.com/chfields.use"
+	assert.True(t, hasEdge(result, useID, b1ChannelID, EdgeTypeSendsTo))
+	assert.True(t, hasEdge(result, useID, b2ChannelID, EdgeTypeSendsTo))
 }
 
 func TestParseWorkspaceDoesNotEmitExternalImplementsEdges(t *testing.T) {

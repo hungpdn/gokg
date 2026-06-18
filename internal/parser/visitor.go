@@ -410,8 +410,8 @@ func (p *Parser) addChannelArgumentFlowEdges(
 			continue
 		}
 
-		paramChan, ok := channelType(params.At(paramIndex).Type())
-		if !ok {
+		param := params.At(paramIndex)
+		if _, ok := channelType(param.Type()); !ok {
 			continue
 		}
 		if _, ok := channelType(pkg.TypesInfo.TypeOf(arg)); !ok {
@@ -423,23 +423,64 @@ func (p *Parser) addChannelArgumentFlowEdges(
 			continue
 		}
 
-		switch paramChan.Dir() {
-		case types.RecvOnly:
-			appendEdge(mu, result, &Edge{
-				From:   calledID,
-				To:     argChannelID,
-				Type:   EdgeTypeReceivesFrom,
-				RepoID: p.RepoID,
-			})
-		case types.SendOnly:
-			appendEdge(mu, result, &Edge{
-				From:   calledID,
-				To:     argChannelID,
-				Type:   EdgeTypeSendsTo,
-				RepoID: p.RepoID,
+		paramChannelID, _ := channelNodeIdentity(pkg, param, calledID, param.Name())
+		appendChannelArgFlow(mu, result, channelArgFlow{
+			CalleeID:       calledID,
+			ParamChannelID: paramChannelID,
+			ArgChannelID:   argChannelID,
+			RepoID:         p.RepoID,
+		})
+	}
+}
+
+func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
+	if result == nil || len(result.channelArgFlows) == 0 {
+		return
+	}
+
+	observed := make(map[string]map[EdgeType]bool)
+	existing := make(map[string]bool)
+	for _, edge := range result.Edges {
+		if edge == nil {
+			continue
+		}
+		existing[edgeIdentity(edge.From, edge.To, edge.Type)] = true
+		if edge.Type != EdgeTypeSendsTo && edge.Type != EdgeTypeReceivesFrom {
+			continue
+		}
+		key := channelFlowKey(edge.From, edge.To)
+		if observed[key] == nil {
+			observed[key] = make(map[EdgeType]bool)
+		}
+		observed[key][edge.Type] = true
+	}
+
+	for _, flow := range result.channelArgFlows {
+		for _, edgeType := range []EdgeType{EdgeTypeSendsTo, EdgeTypeReceivesFrom} {
+			if !observed[channelFlowKey(flow.CalleeID, flow.ParamChannelID)][edgeType] {
+				continue
+			}
+			key := edgeIdentity(flow.CalleeID, flow.ArgChannelID, edgeType)
+			if existing[key] {
+				continue
+			}
+			existing[key] = true
+			result.Edges = append(result.Edges, &Edge{
+				From:   flow.CalleeID,
+				To:     flow.ArgChannelID,
+				Type:   edgeType,
+				RepoID: flow.RepoID,
 			})
 		}
 	}
+}
+
+func channelFlowKey(from, to string) string {
+	return BuildID(from, "\x00", to)
+}
+
+func edgeIdentity(from string, to string, edgeType EdgeType) string {
+	return BuildID(from, "\x00", to, "\x00", string(edgeType))
 }
 
 func (p *Parser) addGoroutineEdges(
@@ -645,11 +686,15 @@ func (p *Parser) resolveChannelNode(
 			chanName = expr.Name
 		}
 	case *ast.SelectorExpr:
-		chanObj = pkg.TypesInfo.Uses[expr.Sel]
-		if chanObj != nil {
-			chanName = chanObj.Name()
+		if selection := pkg.TypesInfo.Selections[expr]; selection != nil {
+			chanName = selectorChannelName(expr)
 		} else {
-			chanName = expr.Sel.Name
+			chanObj = pkg.TypesInfo.Uses[expr.Sel]
+			if chanObj != nil {
+				chanName = chanObj.Name()
+			} else {
+				chanName = expr.Sel.Name
+			}
 		}
 	case *ast.ParenExpr:
 		return p.resolveChannelNode(pkg, expr.X, currentFunc, filename, created, mu, result)
@@ -683,6 +728,21 @@ func (p *Parser) resolveChannelNode(
 	}
 
 	return chanID
+}
+
+func selectorChannelName(expr ast.Expr) string {
+	switch node := expr.(type) {
+	case *ast.Ident:
+		return node.Name
+	case *ast.SelectorExpr:
+		prefix := selectorChannelName(node.X)
+		if prefix == "" {
+			return node.Sel.Name
+		}
+		return BuildID(prefix, ".", node.Sel.Name)
+	default:
+		return ""
+	}
 }
 
 func channelType(typ types.Type) (*types.Chan, bool) {
@@ -756,6 +816,12 @@ func appendNode(mu *sync.Mutex, result *ParseResult, node *Node) {
 func appendEdge(mu *sync.Mutex, result *ParseResult, edge *Edge) {
 	mu.Lock()
 	result.Edges = append(result.Edges, edge)
+	mu.Unlock()
+}
+
+func appendChannelArgFlow(mu *sync.Mutex, result *ParseResult, flow channelArgFlow) {
+	mu.Lock()
+	result.channelArgFlows = append(result.channelArgFlows, flow)
 	mu.Unlock()
 }
 

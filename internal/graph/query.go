@@ -111,6 +111,8 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 	for toID, edges := range qb.g.edges[id] {
 		pNode, ok := qb.g.nodes[toID]
 		if !ok || !isConcurrencyNode(pNode.Type) {
+			qb.appendCalledConcurrencyConnections(toID, edges, "via_call", &connections, seen)
+			qb.appendSpawnedConcurrencyConnections(toID, edges, &connections, seen)
 			continue
 		}
 
@@ -125,6 +127,9 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 			}
 			seen[key] = true
 			connections = append(connections, ConcurrencyConnection{Node: pNode, Edge: edge, Direction: "outbound"})
+		}
+		if pNode.Type == parser.NodeTypeGoroutine {
+			qb.appendSpawnedConcurrencyConnections(toID, edges, &connections, seen)
 		}
 	}
 
@@ -156,6 +161,62 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 	}
 
 	return connections, nil
+}
+
+func (qb *QueryBuilder) appendCalledConcurrencyConnections(
+	calleeID int64,
+	callEdges []*parser.Edge,
+	direction string,
+	connections *[]ConcurrencyConnection,
+	seen map[string]bool,
+) {
+	for _, callEdge := range callEdges {
+		if callEdge == nil || callEdge.Type != parser.EdgeTypeCalls {
+			continue
+		}
+		qb.appendOutboundConcurrencyConnections(calleeID, direction, connections, seen)
+	}
+}
+
+func (qb *QueryBuilder) appendSpawnedConcurrencyConnections(
+	goroutineID int64,
+	spawnEdges []*parser.Edge,
+	connections *[]ConcurrencyConnection,
+	seen map[string]bool,
+) {
+	for _, spawnEdge := range spawnEdges {
+		if spawnEdge == nil || spawnEdge.Type != parser.EdgeTypeSpawns {
+			continue
+		}
+		for calleeID, edges := range qb.g.edges[goroutineID] {
+			qb.appendCalledConcurrencyConnections(calleeID, edges, "via_goroutine", connections, seen)
+		}
+	}
+}
+
+func (qb *QueryBuilder) appendOutboundConcurrencyConnections(
+	fromID int64,
+	direction string,
+	connections *[]ConcurrencyConnection,
+	seen map[string]bool,
+) {
+	for toID, edges := range qb.g.edges[fromID] {
+		pNode, ok := qb.g.nodes[toID]
+		if !ok || !isConcurrencyNode(pNode.Type) {
+			continue
+		}
+		for _, edge := range edges {
+			if edge == nil || !isConcurrencyEdge(edge.Type) {
+				continue
+			}
+			key := fmt.Sprintf("%s:%d:%d:%s", direction, fromID, toID, edge.Type)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			*connections = append(*connections, ConcurrencyConnection{Node: pNode, Edge: edge, Direction: direction})
+		}
+	}
 }
 
 func isConcurrencyEdge(edgeType parser.EdgeType) bool {

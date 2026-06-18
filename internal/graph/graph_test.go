@@ -162,11 +162,34 @@ func TestConcurrencyGraphIncludesGoroutinesAndChannels(t *testing.T) {
 	assert.True(t, hasConcurrencyConnection(fromA, "funcA.goroutine_L10", parser.EdgeTypeSpawns, "outbound"))
 	assert.True(t, hasConcurrencyConnection(fromA, "funcA.ch", parser.EdgeTypeSendsTo, "outbound"))
 	assert.True(t, hasConcurrencyConnection(fromA, "funcA.ch", parser.EdgeTypeReceivesFrom, "outbound"))
+	assert.True(t, hasConcurrencyConnection(fromA, "funcB.ch", parser.EdgeTypeReceivesFrom, "via_goroutine"))
 
 	fromB, err := qb.GetConcurrencyGraph("funcB")
 	require.NoError(t, err)
 	assert.True(t, hasConcurrencyConnection(fromB, "funcA.goroutine_L10", parser.EdgeTypeCalls, "inbound"))
 	assert.True(t, hasConcurrencyConnection(fromB, "funcB.ch", parser.EdgeTypeReceivesFrom, "outbound"))
+}
+
+func TestConcurrencyGraphIncludesCalledFunctionChannelFlow(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	nodes := []*parser.Node{
+		{ID: "main", Type: parser.NodeTypeFunc, Name: "main"},
+		{ID: "worker", Type: parser.NodeTypeFunc, Name: "worker"},
+		{ID: "main.ch", Type: parser.NodeTypeChannel, Name: "ch (chan int)"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "main", To: "worker", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "worker", To: "main.ch", Type: parser.EdgeTypeReceivesFrom}))
+
+	connections, err := g.Query().GetConcurrencyGraph("main")
+	require.NoError(t, err)
+	assert.True(t, hasConcurrencyConnection(connections, "main.ch", parser.EdgeTypeReceivesFrom, "via_call"))
 }
 
 func TestBuildFromParseResultsMergesCrossRepoEdges(t *testing.T) {
