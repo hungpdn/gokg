@@ -67,7 +67,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					case *ast.TypeSpec:
 						p.extractTypeSpec(pkg, filename, spec, mu, result)
 					case *ast.ValueSpec:
-						p.extractValueSpec(pkg, filename, node.Tok, spec, mu, result)
+						p.extractValueSpec(pkg, filename, node.Tok, spec, createdChannels, createdBoundaryNodes, mu, result)
 					}
 				}
 			case *ast.FuncDecl:
@@ -188,6 +188,8 @@ func (p *Parser) extractValueSpec(
 	filename string,
 	tok token.Token,
 	node *ast.ValueSpec,
+	createdChannels map[string]bool,
+	createdBoundaryNodes map[string]bool,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -232,7 +234,7 @@ func (p *Parser) extractValueSpec(
 		p.addTypeReferenceEdges(symbolID, obj.Type(), mu, result)
 
 		for _, value := range node.Values {
-			p.addExpressionReferenceEdges(pkg, symbolID, value, mu, result)
+			p.addExpressionReferenceEdges(pkg, symbolID, value, filename, createdChannels, createdBoundaryNodes, mu, result)
 		}
 	}
 }
@@ -309,6 +311,7 @@ func (p *Parser) inspectFunctionBody(
 	result *ParseResult,
 ) {
 	goCalls := make(map[*ast.CallExpr]bool)
+	goFuncLits := make(map[*ast.FuncLit]bool)
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		if n == nil {
@@ -317,9 +320,15 @@ func (p *Parser) inspectFunctionBody(
 
 		switch node := n.(type) {
 		case *ast.FuncLit:
+			if goFuncLits[node] {
+				return false
+			}
+			if node.Body != nil {
+				p.inspectFunctionBody(pkg, node.Body, currentFunc, filename, createdChannels, createdBoundaryNodes, mu, result)
+			}
 			return false
 		case *ast.GoStmt:
-			p.addGoroutineEdges(pkg, node, currentFunc, filename, createdChannels, createdBoundaryNodes, goCalls, mu, result)
+			p.addGoroutineEdges(pkg, node, currentFunc, filename, createdChannels, createdBoundaryNodes, goCalls, goFuncLits, mu, result)
 		case *ast.CallExpr:
 			if !goCalls[node] {
 				p.addCallEdge(pkg, currentFunc, node, createdBoundaryNodes, mu, result)
@@ -364,6 +373,7 @@ func (p *Parser) addGoroutineEdges(
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
 	goCalls map[*ast.CallExpr]bool,
+	goFuncLits map[*ast.FuncLit]bool,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -374,6 +384,9 @@ func (p *Parser) addGoroutineEdges(
 	line := pkg.Fset.Position(node.Pos()).Line
 	goroutineID := fmt.Sprintf("%s.goroutine_L%d", currentFunc, line)
 	goCalls[node.Call] = true
+	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok {
+		goFuncLits[fun] = true
+	}
 
 	appendNode(mu, result, &Node{
 		ID:       goroutineID,
@@ -471,7 +484,16 @@ func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mut
 	}
 }
 
-func (p *Parser) addExpressionReferenceEdges(pkg *packages.Package, from string, expr ast.Expr, mu *sync.Mutex, result *ParseResult) {
+func (p *Parser) addExpressionReferenceEdges(
+	pkg *packages.Package,
+	from string,
+	expr ast.Expr,
+	filename string,
+	createdChannels map[string]bool,
+	createdBoundaryNodes map[string]bool,
+	mu *sync.Mutex,
+	result *ParseResult,
+) {
 	seen := make(map[string]bool)
 
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -480,6 +502,13 @@ func (p *Parser) addExpressionReferenceEdges(pkg *packages.Package, from string,
 		}
 
 		switch node := n.(type) {
+		case *ast.FuncLit:
+			if node.Body != nil {
+				p.inspectFunctionBody(pkg, node.Body, from, filename, createdChannels, createdBoundaryNodes, mu, result)
+			}
+			return false
+		case *ast.CallExpr:
+			p.addCallEdge(pkg, from, node, createdBoundaryNodes, mu, result)
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(from, typ, mu, result)

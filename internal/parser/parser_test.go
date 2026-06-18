@@ -346,6 +346,117 @@ func main() {
 	}
 }
 
+func TestParseWorkspaceCapturesCallsInsideFuncLiterals(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/closures\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+func helper() {}
+
+func run(fn func()) {}
+
+func main() {
+	run(func() {
+		helper()
+		helper()
+	})
+}
+`)
+
+	parser := NewParser("example.com/closures", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	mainID := "example.com/closures.main"
+	helperID := "example.com/closures.helper"
+	helperEdges := edgesBy(result, mainID, helperID, EdgeTypeCalls)
+	require.Len(t, helperEdges, 2)
+
+	var lines []int
+	for _, edge := range helperEdges {
+		require.Len(t, edge.Occurrences, 1)
+		lines = append(lines, edge.Occurrences[0].Line)
+	}
+	assert.ElementsMatch(t, []int{9, 10}, lines)
+	assert.True(t, hasEdge(result, mainID, "example.com/closures.run", EdgeTypeCalls))
+}
+
+func TestParseWorkspaceKeepsGoFuncCallsOnGoroutineNode(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/gofunc\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+func helper() {}
+
+func main() {
+	go func() {
+		helper()
+	}()
+}
+`)
+
+	parser := NewParser("example.com/gofunc", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	mainID := "example.com/gofunc.main"
+	helperID := "example.com/gofunc.helper"
+	assert.False(t, hasEdge(result, mainID, helperID, EdgeTypeCalls), "go func body should not be counted again on the parent function")
+
+	var goroutineID string
+	for _, node := range result.Nodes {
+		if node.Type == NodeTypeGoroutine && strings.HasPrefix(node.ID, mainID+".goroutine_L") {
+			goroutineID = node.ID
+			break
+		}
+	}
+	require.NotEmpty(t, goroutineID)
+	assert.True(t, hasEdge(result, mainID, goroutineID, EdgeTypeSpawns))
+	assert.True(t, hasEdge(result, goroutineID, helperID, EdgeTypeCalls))
+}
+
+func TestParseWorkspaceCapturesCallsInsideTopLevelFuncLiteralInitializer(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/initfunc\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+type command struct {
+	Run func()
+}
+
+func helper() {}
+
+var runner = command{
+	Run: func() {
+		helper()
+		helper()
+	},
+}
+`)
+
+	parser := NewParser("example.com/initfunc", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	runnerID := "example.com/initfunc.runner"
+	helperID := "example.com/initfunc.helper"
+	helperEdges := edgesBy(result, runnerID, helperID, EdgeTypeCalls)
+	require.Len(t, helperEdges, 2)
+
+	var lines []int
+	for _, edge := range helperEdges {
+		require.Len(t, edge.Occurrences, 1)
+		lines = append(lines, edge.Occurrences[0].Line)
+	}
+	assert.ElementsMatch(t, []int{11, 12}, lines)
+}
+
 func TestParseWorkspaceCapturesInstantiationOccurrences(t *testing.T) {
 	withGoBuildCache(t)
 
