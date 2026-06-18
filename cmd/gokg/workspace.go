@@ -2,13 +2,10 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
-	"golang.org/x/mod/modfile"
 )
 
 var workspaceCmd = &cobra.Command{
@@ -58,17 +55,22 @@ var workspaceAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to resolve path: %w", err)
 		}
 
-		// Detect module prefix from go.mod
-		repoID := detectModulePrefix(absPath)
-		if repoID == "" {
-			repoID = filepath.Base(absPath)
-		}
-
-		if err := ws.AddRepo(repoID, absPath); err != nil {
+		analysisRoot, err := resolveGoAnalysisRoot(absPath)
+		if err != nil {
 			return err
 		}
 
-		fmt.Printf("Added repo %q (%s) to workspace %q\n", repoID, absPath, wsName)
+		// Detect module prefix from go.mod.
+		repoID := analysisRoot.ModulePrefix
+		if repoID == "" {
+			repoID = filepath.Base(analysisRoot.Dir)
+		}
+
+		if err := ws.AddRepo(repoID, analysisRoot.Dir); err != nil {
+			return err
+		}
+
+		fmt.Printf("Added repo %q (%s) to workspace %q\n", repoID, analysisRoot.Dir, wsName)
 		return nil
 	},
 }
@@ -139,18 +141,6 @@ var workspaceRemoveCmd = &cobra.Command{
 		fmt.Printf("Removed repo %q from workspace %q\n", repoID, wsName)
 		return nil
 	},
-}
-
-func detectModulePrefix(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-	if err != nil {
-		return ""
-	}
-	f, err := modfile.Parse("go.mod", data, nil)
-	if err != nil || f.Module == nil {
-		return ""
-	}
-	return strings.TrimSpace(f.Module.Mod.Path)
 }
 
 func init() {

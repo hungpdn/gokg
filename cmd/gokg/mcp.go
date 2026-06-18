@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/mcp"
@@ -13,7 +12,6 @@ import (
 	"github.com/hungpdn/gokg/internal/watcher"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
-	"golang.org/x/mod/modfile"
 )
 
 var mcpCmd = &cobra.Command{
@@ -27,20 +25,6 @@ var mcpCmd = &cobra.Command{
 		enableWatch, _ := cmd.Flags().GetBool("watch")
 		modulePrefix, _ := cmd.Flags().GetString("module")
 		workspaceName, _ := cmd.Flags().GetString("workspace")
-
-		// Detect module automatically if not provided
-		if modulePrefix == "" {
-			data, err := os.ReadFile("go.mod")
-			if err == nil {
-				f, err := modfile.Parse("go.mod", data, nil)
-				if err == nil && f.Module != nil {
-					modulePrefix = f.Module.Mod.Path
-				}
-			}
-			if modulePrefix == "" {
-				modulePrefix = "gokg"
-			}
-		}
 
 		if workspaceName != "" {
 			if cmd.Flags().Changed("db") {
@@ -62,12 +46,17 @@ var mcpCmd = &cobra.Command{
 				}
 
 				for _, repo := range sortedWorkspaceRepos(ws) {
-					repoModule := detectModulePrefix(repo.Path)
+					analysisRoot, err := resolveGoAnalysisRoot(repo.Path)
+					if err != nil {
+						log.Printf("Warning: Failed to resolve Go root for repo %q: %v", repo.ID, err)
+						continue
+					}
+					repoModule := analysisRoot.ModulePrefix
 					if repoModule == "" {
 						repoModule = repo.ID
 					}
 					p := parser.NewWorkspaceParser(repoModule, repo.ID, workspaceName)
-					w, err := watcher.NewWatcher(g, p, repo.Path)
+					w, err := watcher.NewWatcher(g, p, analysisRoot.Dir)
 					if err != nil {
 						log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repo.ID, err)
 						continue
@@ -97,6 +86,18 @@ var mcpCmd = &cobra.Command{
 			return server.Start(ctx)
 		}
 
+		analysisRoot, err := resolveGoAnalysisRoot(".")
+		if err != nil {
+			return err
+		}
+		// Detect module automatically if not provided.
+		if modulePrefix == "" {
+			modulePrefix = analysisRoot.ModulePrefix
+			if modulePrefix == "" {
+				modulePrefix = "gokg"
+			}
+		}
+
 		// Init Storage
 		store, err := storage.NewBadgerStorage(dbPath)
 		if err != nil {
@@ -115,7 +116,7 @@ var mcpCmd = &cobra.Command{
 
 		if enableWatch {
 			p := parser.NewParser(modulePrefix, modulePrefix)
-			w, err := watcher.NewWatcher(g, p, ".")
+			w, err := watcher.NewWatcher(g, p, analysisRoot.Dir)
 			if err != nil {
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
 			} else {

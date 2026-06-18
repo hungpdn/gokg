@@ -53,6 +53,34 @@ func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
 	assert.DirExists(t, dbDir)
 }
 
+func TestAnalyzeResolvesSingleNestedModule(t *testing.T) {
+	withGoBuildCache(t)
+	parentDir := t.TempDir()
+	moduleDir := filepath.Join(parentDir, "services", "api")
+	writeTinyGoModule(t, moduleDir, "example.com/api")
+	dbDir := filepath.Join(t.TempDir(), "custom-db")
+
+	withWorkingDir(t, parentDir)
+
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--db", dbDir, "--gc=false"})
+
+	require.NoError(t, cmd.Execute())
+	assert.DirExists(t, dbDir)
+}
+
+func TestResolveGoAnalysisRootRejectsMultipleNestedModules(t *testing.T) {
+	parentDir := t.TempDir()
+	writeTinyGoModule(t, filepath.Join(parentDir, "service-a"), "example.com/service-a")
+	writeTinyGoModule(t, filepath.Join(parentDir, "service-b"), "example.com/service-b")
+
+	_, err := resolveGoAnalysisRoot(parentDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple Go modules found")
+	assert.Contains(t, err.Error(), "service-a")
+	assert.Contains(t, err.Error(), "service-b")
+}
+
 func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	withGoBuildCache(t)
 	tmpHome := t.TempDir()
@@ -149,9 +177,16 @@ func newTinyGoProjectWithModule(t *testing.T, modulePath string) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	writeTinyGoModule(t, dir, modulePath)
+	return dir
+}
+
+func writeTinyGoModule(t *testing.T, dir string, modulePath string) {
+	t.Helper()
+
+	require.NoError(t, os.MkdirAll(dir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+modulePath+"\n\ngo 1.25\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644))
-	return dir
 }
 
 func withWorkingDir(t *testing.T, dir string) {

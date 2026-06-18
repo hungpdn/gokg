@@ -14,7 +14,6 @@ import (
 	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
-	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -52,6 +51,15 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	runGC, _ := cmd.Flags().GetBool("gc")
 	includeTests, _ := cmd.Flags().GetBool("tests")
 
+	dir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+	analysisRoot, err := resolveGoAnalysisRoot(dir)
+	if err != nil {
+		return err
+	}
+
 	if rebuild {
 		if err := rebuildBadgerDBPath(dbPath, cmd.Flags().Changed("db")); err != nil {
 			return err
@@ -68,13 +76,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	modulePrefix, _ := cmd.Flags().GetString("module")
 	if modulePrefix == "" {
-		data, err := os.ReadFile("go.mod")
-		if err == nil {
-			f, err := modfile.Parse("go.mod", data, nil)
-			if err == nil && f.Module != nil {
-				modulePrefix = f.Module.Mod.Path
-			}
-		}
+		modulePrefix = analysisRoot.ModulePrefix
 		if modulePrefix == "" {
 			modulePrefix = "gokg"
 		}
@@ -82,8 +84,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Parse Workspace
 	p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
-	dir, _ := os.Getwd()
-	result, err := p.ParseWorkspace(ctx, dir)
+	if filepath.Clean(analysisRoot.Dir) != filepath.Clean(dir) {
+		fmt.Printf("Analyzing Go module at %s\n", analysisRoot.Dir)
+	}
+	result, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
 		return fmt.Errorf("parse workspace failed: %w", err)
 	}
@@ -187,6 +191,10 @@ func analyzeWorkspaceRepo(
 	if !stat.IsDir() {
 		return workspaceAnalysisResult{}, fmt.Errorf("repo %q path is not a directory: %s", repo.ID, repo.Path)
 	}
+	analysisRoot, err := resolveGoAnalysisRoot(repo.Path)
+	if err != nil {
+		return workspaceAnalysisResult{}, fmt.Errorf("resolve repo %q Go root: %w", repo.ID, err)
+	}
 
 	dbPath := ws.GetRepoDBPath(repo.ID)
 	if rebuild {
@@ -201,13 +209,13 @@ func analyzeWorkspaceRepo(
 	}
 	defer store.Close()
 
-	modulePrefix := detectModulePrefix(repo.Path)
+	modulePrefix := analysisRoot.ModulePrefix
 	if modulePrefix == "" {
 		modulePrefix = repo.ID
 	}
 
 	p := parser.NewWorkspaceParser(modulePrefix, repo.ID, ws.Name).WithTests(includeTests)
-	result, err := p.ParseWorkspace(ctx, repo.Path)
+	result, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("parse repo %q failed: %w", repo.ID, err)
 	}
