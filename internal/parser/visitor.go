@@ -588,7 +588,7 @@ func (p *Parser) resolveChannelNode(
 		return ""
 	}
 
-	chanID := BuildID(currentFunc, ".", chanName)
+	chanID, lines := channelNodeIdentity(pkg, chanObj, currentFunc, chanName)
 	if !created[chanID] {
 		created[chanID] = true
 
@@ -598,11 +598,30 @@ func (p *Parser) resolveChannelNode(
 			Name:     fmt.Sprintf("%s (%s)", chanName, graphTypeString(chanType)),
 			PkgPath:  packageGraphPath(pkg),
 			FilePath: filename,
+			Lines:    lines,
 			RepoID:   p.RepoID,
 		})
 	}
 
 	return chanID
+}
+
+func channelNodeIdentity(pkg *packages.Package, obj types.Object, currentFunc string, name string) (string, [2]int) {
+	if obj == nil || obj.Pos() == token.NoPos {
+		return BuildID(currentFunc, ".", name), [2]int{}
+	}
+
+	pos := pkg.Fset.Position(obj.Pos())
+	if !pos.IsValid() || pos.Filename == "" {
+		return BuildID(currentFunc, ".", name), [2]int{}
+	}
+
+	pkgPath := packageGraphPath(pkg)
+	if obj.Pkg() != nil {
+		pkgPath = normalizePackagePath(obj.Pkg().Path())
+	}
+	id := fmt.Sprintf("channel:%s:%s:%d:%d:%s", pkgPath, filepath.ToSlash(pos.Filename), pos.Line, pos.Column, obj.Name())
+	return id, [2]int{pos.Line, pos.Line}
 }
 
 func (p *Parser) ensureImportBoundaryNode(importPath string, created map[string]bool, mu *sync.Mutex, result *ParseResult) {

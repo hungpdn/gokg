@@ -38,9 +38,12 @@ func (qb *QueryBuilder) GetDependencies(nodeID string) ([]*parser.Node, error) {
 	}
 
 	var deps []*parser.Node
-	nodes := qb.g.directed.From(id)
-	for nodes.Next() {
-		toID := nodes.Node().ID()
+	seen := make(map[int64]bool)
+	for toID := range qb.g.edges[id] {
+		if seen[toID] {
+			continue
+		}
+		seen[toID] = true
 		if pNode, ok := qb.g.nodes[toID]; ok {
 			deps = append(deps, pNode)
 		}
@@ -59,9 +62,12 @@ func (qb *QueryBuilder) GetBlastRadius(nodeID string) ([]*parser.Node, error) {
 	}
 
 	var blast []*parser.Node
-	nodes := qb.g.directed.To(id)
-	for nodes.Next() {
-		fromID := nodes.Node().ID()
+	seen := make(map[int64]bool)
+	for fromID, outEdges := range qb.g.edges {
+		if _, ok := outEdges[id]; !ok || seen[fromID] {
+			continue
+		}
+		seen[fromID] = true
 		if pNode, ok := qb.g.nodes[fromID]; ok {
 			blast = append(blast, pNode)
 		}
@@ -102,15 +108,13 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 	connections := make([]ConcurrencyConnection, 0)
 	seen := make(map[string]bool)
 
-	outbound := qb.g.directed.From(id)
-	for outbound.Next() {
-		toID := outbound.Node().ID()
+	for toID, edges := range qb.g.edges[id] {
 		pNode, ok := qb.g.nodes[toID]
 		if !ok || !isConcurrencyNode(pNode.Type) {
 			continue
 		}
 
-		for _, edge := range qb.g.edges[id][toID] {
+		for _, edge := range edges {
 			if edge == nil || !isConcurrencyEdge(edge.Type) {
 				continue
 			}
@@ -124,15 +128,17 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 		}
 	}
 
-	inbound := qb.g.directed.To(id)
-	for inbound.Next() {
-		fromID := inbound.Node().ID()
+	for fromID, outEdges := range qb.g.edges {
+		edges, ok := outEdges[id]
+		if !ok {
+			continue
+		}
 		pNode, ok := qb.g.nodes[fromID]
 		if !ok || !isConcurrencyNode(pNode.Type) {
 			continue
 		}
 
-		for _, edge := range qb.g.edges[fromID][id] {
+		for _, edge := range edges {
 			if edge == nil {
 				continue
 			}
@@ -179,11 +185,8 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 	}
 
 	var impls []*parser.Node
-	// Walk all nodes pointing TO the interface via IMPLEMENTS edges
-	inbound := qb.g.directed.To(ifaceNumID)
-	for inbound.Next() {
-		fromNumID := inbound.Node().ID()
-		for _, edge := range qb.g.edges[fromNumID][ifaceNumID] {
+	for fromNumID, outEdges := range qb.g.edges {
+		for _, edge := range outEdges[ifaceNumID] {
 			if edge != nil && edge.Type == parser.EdgeTypeImplements {
 				if pNode, ok := qb.g.nodes[fromNumID]; ok {
 					impls = append(impls, pNode)

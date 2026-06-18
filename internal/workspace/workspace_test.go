@@ -108,6 +108,40 @@ func TestLoadNonExistent(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestLoadRejectsUnsafeConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	wsDir := filepath.Join(tmpHome, workspaceDirName, "unsafe-ws")
+	require.NoError(t, os.MkdirAll(wsDir, 0o755))
+	config := `{
+  "name": "unsafe-ws",
+  "repos": {
+    "github.com/org/service-a": "/path/to/service-a",
+    "github.com_org_service-a": "/path/to/service-a-copy"
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(wsDir, configFileName), []byte(config), 0o644))
+
+	_, err := Load("unsafe-ws")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "database path collides")
+}
+
+func TestLoadRejectsWorkspaceNameMismatch(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	wsDir := filepath.Join(tmpHome, workspaceDirName, "actual-ws")
+	require.NoError(t, os.MkdirAll(wsDir, 0o755))
+	config := `{"name":"other-ws","repos":{}}`
+	require.NoError(t, os.WriteFile(filepath.Join(wsDir, configFileName), []byte(config), 0o644))
+
+	_, err := Load("actual-ws")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match")
+}
+
 func TestRemoveRepo(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)

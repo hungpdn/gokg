@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,8 @@ import (
 
 	"gonum.org/v1/gonum/graph/simple"
 )
+
+var ErrUnknownEdgeEndpoint = errors.New("edge references unknown nodes")
 
 type Graph struct {
 	mu         sync.RWMutex
@@ -113,7 +116,7 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	toID, toExists := g.nodeMap[pEdge.To]
 
 	if !fromExists || !toExists {
-		return fmt.Errorf("edge references unknown nodes: %s -> %s", pEdge.From, pEdge.To)
+		return fmt.Errorf("%w: %s -> %s", ErrUnknownEdgeEndpoint, pEdge.From, pEdge.To)
 	}
 
 	if g.edges[fromID] == nil {
@@ -195,6 +198,9 @@ func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.Pa
 		}
 		for _, edge := range result.Edges {
 			if err := g.AddEdge(ctx, edge); err != nil {
+				if !errors.Is(err, ErrUnknownEdgeEndpoint) {
+					return err
+				}
 				// Keep unresolved edges in storage so multi-DB loads can resolve
 				// them after all repos contribute their nodes.
 				if persistErr := g.persistEdge(ctx, edge); persistErr != nil {
@@ -365,22 +371,6 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 	}
 
 	for _, id := range nodesToRemove {
-		node := g.nodes[id]
-
-		// Remove from Gonum graph
-		g.directed.RemoveNode(id)
-
-		// Remove from internal maps (keep in nodeMap to maintain ID stability)
-		delete(g.nodes, id)
-
-		// Remove from BadgerDB
-		if store := g.storageForNode(node); store != nil {
-			if err := store.Delete(ctx, []byte("node:"+node.ID)); err != nil {
-				return fmt.Errorf("delete node %q: %w", node.ID, err)
-			}
-		}
-
-		// Remove all outbound edges from this node
 		if outEdges, ok := g.edges[id]; ok {
 			for _, edges := range outEdges {
 				for _, edge := range edges {
@@ -393,8 +383,20 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 					}
 				}
 			}
-			delete(g.edges, id)
 		}
+
+		node := g.nodes[id]
+		if store := g.storageForNode(node); store != nil {
+			if err := store.Delete(ctx, []byte("node:"+node.ID)); err != nil {
+				return fmt.Errorf("delete node %q: %w", node.ID, err)
+			}
+		}
+	}
+
+	for _, id := range nodesToRemove {
+		g.directed.RemoveNode(id)
+		delete(g.nodes, id)
+		delete(g.edges, id)
 	}
 
 	return nil

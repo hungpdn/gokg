@@ -96,56 +96,29 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 		}
 
 		if pattern.Edge.Direction == cypher.DirOutbound || pattern.Edge.Direction == cypher.DirAny {
-			outbound := qb.g.directed.From(numID1)
-			for outbound.Next() {
-				numID2 := outbound.Node().ID()
+			for numID2, edges := range qb.g.edges[numID1] {
 				node2 := qb.g.nodes[numID2]
 				if !matchesCypherNodeType(node2, pattern.Node2.Type) {
 					continue
 				}
-
-				for _, edge := range qb.g.edges[numID1][numID2] {
-					if !matchesCypherEdgeType(edge, pattern.Edge.Type) {
-						continue
-					}
-					row := make(CypherResultRow)
-					bindCypherAlias(row, pattern.Node1.Alias, node1)
-					bindCypherAlias(row, pattern.Node2.Alias, node2)
-					bindCypherAlias(row, pattern.Edge.Alias, edge)
-					if cypherRowMatchesWhere(q.Where, row) {
-						results = append(results, row)
-					}
-					if pattern.Edge.Type != "" {
-						break // A graph pair has at most one edge for a specific type.
-					}
-				}
+				results = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
 			}
 		}
 
 		if pattern.Edge.Direction == cypher.DirInbound || pattern.Edge.Direction == cypher.DirAny {
-			inbound := qb.g.directed.To(numID1)
-			for inbound.Next() {
-				numID2 := inbound.Node().ID()
+			for numID2, outEdges := range qb.g.edges {
+				if pattern.Edge.Direction == cypher.DirAny && numID2 == numID1 {
+					continue
+				}
 				node2 := qb.g.nodes[numID2]
 				if !matchesCypherNodeType(node2, pattern.Node2.Type) {
 					continue
 				}
-
-				for _, edge := range qb.g.edges[numID2][numID1] {
-					if !matchesCypherEdgeType(edge, pattern.Edge.Type) {
-						continue
-					}
-					row := make(CypherResultRow)
-					bindCypherAlias(row, pattern.Node1.Alias, node1)
-					bindCypherAlias(row, pattern.Node2.Alias, node2)
-					bindCypherAlias(row, pattern.Edge.Alias, edge)
-					if cypherRowMatchesWhere(q.Where, row) {
-						results = append(results, row)
-					}
-					if pattern.Edge.Type != "" {
-						break
-					}
+				edges, ok := outEdges[numID1]
+				if !ok {
+					continue
 				}
+				results = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
 			}
 		}
 	}
@@ -174,6 +147,32 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 	}
 
 	return finalResults, nil
+}
+
+func appendCypherEdgeRows(
+	results []CypherResultRow,
+	q *cypher.Query,
+	pattern *cypher.Pattern,
+	node1 *parser.Node,
+	node2 *parser.Node,
+	edges []*parser.Edge,
+) []CypherResultRow {
+	for _, edge := range edges {
+		if !matchesCypherEdgeType(edge, pattern.Edge.Type) {
+			continue
+		}
+		row := make(CypherResultRow)
+		bindCypherAlias(row, pattern.Node1.Alias, node1)
+		bindCypherAlias(row, pattern.Node2.Alias, node2)
+		bindCypherAlias(row, pattern.Edge.Alias, edge)
+		if cypherRowMatchesWhere(q.Where, row) {
+			results = append(results, row)
+		}
+		if pattern.Edge.Type != "" {
+			break // A graph pair has at most one edge for a specific type.
+		}
+	}
+	return results
 }
 
 func validateCypherQuery(q *cypher.Query) error {

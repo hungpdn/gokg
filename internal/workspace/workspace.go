@@ -103,12 +103,20 @@ func Load(name string) (*Workspace, error) {
 	if cfg.Repos == nil {
 		cfg.Repos = make(map[string]string)
 	}
+	if cfg.Name == "" {
+		cfg.Name = name
+	}
 
-	return &Workspace{
+	ws := &Workspace{
 		Name:   name,
 		Dir:    wsDir,
 		Config: cfg,
-	}, nil
+	}
+	if err := ws.validateConfig(); err != nil {
+		return nil, err
+	}
+
+	return ws, nil
 }
 
 // Save writes the workspace configuration to disk.
@@ -127,12 +135,12 @@ func (ws *Workspace) Save() error {
 // AddRepo adds a repository to the workspace.
 func (ws *Workspace) AddRepo(repoID string, absPath string) error {
 	repoID = strings.TrimSpace(repoID)
-	if repoID == "" {
-		return fmt.Errorf("repo ID cannot be empty")
+	if err := validateRepoID(repoID); err != nil {
+		return err
 	}
 	absPath = strings.TrimSpace(absPath)
-	if absPath == "" {
-		return fmt.Errorf("repo path cannot be empty")
+	if err := validateRepoPath(absPath); err != nil {
+		return err
 	}
 
 	if ws.Config.Repos == nil {
@@ -213,4 +221,48 @@ func validateName(name string) (string, error) {
 		return "", fmt.Errorf("invalid workspace name %q", name)
 	}
 	return name, nil
+}
+
+func (ws *Workspace) validateConfig() error {
+	if ws.Config.Name != ws.Name {
+		return fmt.Errorf("workspace config name %q does not match workspace %q", ws.Config.Name, ws.Name)
+	}
+
+	dbPaths := make(map[string]string, len(ws.Config.Repos))
+	for repoID, repoPath := range ws.Config.Repos {
+		if err := validateRepoID(repoID); err != nil {
+			return err
+		}
+		if err := validateRepoPath(repoPath); err != nil {
+			return fmt.Errorf("repo %q: %w", repoID, err)
+		}
+
+		dbPath := filepath.Clean(ws.GetRepoDBPath(repoID))
+		if existingRepoID, exists := dbPaths[dbPath]; exists {
+			return fmt.Errorf("repo %q database path collides with existing repo %q at %s", repoID, existingRepoID, dbPath)
+		}
+		dbPaths[dbPath] = repoID
+	}
+
+	return nil
+}
+
+func validateRepoID(repoID string) error {
+	if strings.TrimSpace(repoID) != repoID {
+		return fmt.Errorf("repo ID %q has leading or trailing whitespace", repoID)
+	}
+	if repoID == "" {
+		return fmt.Errorf("repo ID cannot be empty")
+	}
+	return nil
+}
+
+func validateRepoPath(repoPath string) error {
+	if strings.TrimSpace(repoPath) != repoPath {
+		return fmt.Errorf("repo path %q has leading or trailing whitespace", repoPath)
+	}
+	if repoPath == "" {
+		return fmt.Errorf("repo path cannot be empty")
+	}
+	return nil
 }

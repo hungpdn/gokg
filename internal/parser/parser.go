@@ -475,7 +475,7 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 					}
 					id := BuildID(pkgPath, ".", obj.Name())
 
-					if iType, ok := named.Underlying().(*types.Interface); ok {
+					if iType, ok := named.Underlying().(*types.Interface); ok && isWorkspacePkg {
 						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
 					} else if isWorkspacePkg {
 						structs = append(structs, structInfo{id: id, t: named})

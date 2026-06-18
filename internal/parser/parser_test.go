@@ -96,12 +96,19 @@ func process(ch chan int) {
 	pkgID := "example.com/phase9/worker"
 	startID := pkgID + ".Start"
 	processID := pkgID + ".process"
-	channelID := startID + ".ch"
 
 	require.NotNil(t, nodes[pkgID])
 	require.Equal(t, NodeTypePackage, nodes[pkgID].Type)
 	require.NotNil(t, nodes[startID])
 	require.Equal(t, NodeTypeFunc, nodes[startID].Type)
+	var channelID string
+	for _, edge := range result.Edges {
+		if edge.From == startID && edge.Type == EdgeTypeSendsTo {
+			channelID = edge.To
+			break
+		}
+	}
+	require.NotEmpty(t, channelID)
 	require.NotNil(t, nodes[channelID])
 	require.Equal(t, NodeTypeChannel, nodes[channelID].Type)
 	assert.Equal(t, "ch (chan int)", nodes[channelID].Name)
@@ -417,6 +424,65 @@ func main() {
 	require.NotEmpty(t, goroutineID)
 	assert.True(t, hasEdge(result, mainID, goroutineID, EdgeTypeSpawns))
 	assert.True(t, hasEdge(result, goroutineID, helperID, EdgeTypeCalls))
+}
+
+func TestParseWorkspaceUsesDeclarationIdentityForPackageChannels(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/chglobal\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+var ch = make(chan int)
+
+func send() {
+	ch <- 1
+}
+
+func recv() {
+	<-ch
+}
+`)
+
+	parser := NewParser("example.com/chglobal", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	var channelIDs []string
+	for _, node := range result.Nodes {
+		if node.Type == NodeTypeChannel && node.Name == "ch (chan int)" {
+			channelIDs = append(channelIDs, node.ID)
+		}
+	}
+	require.Len(t, channelIDs, 1)
+
+	sendID := "example.com/chglobal.send"
+	recvID := "example.com/chglobal.recv"
+	assert.True(t, hasEdge(result, sendID, channelIDs[0], EdgeTypeSendsTo))
+	assert.True(t, hasEdge(result, recvID, channelIDs[0], EdgeTypeReceivesFrom))
+}
+
+func TestParseWorkspaceDoesNotEmitExternalImplementsEdges(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/extimpl\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+import "fmt"
+
+type Thing struct{}
+
+func (Thing) String() string { return "" }
+
+var _ fmt.Stringer = Thing{}
+`)
+
+	parser := NewParser("example.com/extimpl", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	assert.False(t, hasEdge(result, "example.com/extimpl.Thing", "fmt.Stringer", EdgeTypeImplements))
 }
 
 func TestParseWorkspaceCapturesCallsInsideTopLevelFuncLiteralInitializer(t *testing.T) {

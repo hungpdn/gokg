@@ -94,6 +94,22 @@ func TestExecuteCypher(t *testing.T) {
 		assert.Equal(t, "funcB", res[0]["r.To"])
 	})
 
+	t.Run("Match Self Edge", func(t *testing.T) {
+		require.NoError(t, g.AddEdge(context.Background(), &parser.Edge{From: "funcA", To: "funcA", Type: parser.EdgeTypeCalls}))
+
+		input := `MATCH (a:FUNC)-[r:CALLS]->(b:FUNC) WHERE a.Name = "A" RETURN b.Name`
+		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		require.NoError(t, err)
+
+		res, err := qb.ExecuteCypher(q)
+		require.NoError(t, err)
+		var names []string
+		for _, row := range res {
+			names = append(names, row["b.Name"].(string))
+		}
+		assert.Contains(t, names, "A")
+	})
+
 	t.Run("Reject Unknown Where Alias", func(t *testing.T) {
 		input := `MATCH (n:FUNC) WHERE x.Name = "A" RETURN n`
 		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()

@@ -121,6 +121,16 @@ func TestAddEdgePreservesSelfEdgesForExport(t *testing.T) {
 	require.Len(t, g.edges[nodeID][nodeID], 1)
 	assert.Equal(t, parser.EdgeTypeCalls, g.edges[nodeID][nodeID][0].Type)
 	assert.Contains(t, g.ExportDot(), `"funcA" -> "funcA" [label="CALLS", occurrences="1", lines="main.go:10:2"];`)
+
+	deps, err := g.Query().GetDependencies("funcA")
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Equal(t, "funcA", deps[0].ID)
+
+	blast, err := g.Query().GetBlastRadius("funcA")
+	require.NoError(t, err)
+	require.Len(t, blast, 1)
+	assert.Equal(t, "funcA", blast[0].ID)
 }
 
 func TestConcurrencyGraphIncludesGoroutinesAndChannels(t *testing.T) {
@@ -264,6 +274,10 @@ func TestGraphReturnsPersistenceErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "persist node")
 
 	g = NewGraph(nil)
+	err = g.AddEdge(ctx, &parser.Edge{From: "missingA", To: "missingB", Type: parser.EdgeTypeCalls})
+	require.ErrorIs(t, err, ErrUnknownEdgeEndpoint)
+
+	g = NewGraph(nil)
 	_, err = g.AddNode(ctx, &parser.Node{ID: "A", Type: parser.NodeTypeFunc, Name: "A"})
 	require.NoError(t, err)
 	_, err = g.AddNode(ctx, &parser.Node{ID: "B", Type: parser.NodeTypeFunc, Name: "B"})
@@ -283,6 +297,8 @@ func TestGraphReturnsPersistenceErrors(t *testing.T) {
 	err = g.RemovePackage(ctx, "pkg")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete node")
+	id := g.nodeMap["pkg"]
+	require.NotNil(t, g.nodes[id], "memory graph should remain intact when storage delete fails")
 }
 
 func TestGraphPersistsToRepoStores(t *testing.T) {
