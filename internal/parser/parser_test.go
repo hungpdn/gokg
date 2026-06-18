@@ -462,6 +462,58 @@ func recv() {
 	assert.True(t, hasEdge(result, recvID, channelIDs[0], EdgeTypeReceivesFrom))
 }
 
+func TestParseWorkspacePropagatesDirectionalChannelArguments(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/chargs\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+type Worker struct{}
+
+func producer(out chan<- int) {
+	out <- 1
+}
+
+func consumer(in <-chan int) {
+	for range in {
+	}
+}
+
+func (Worker) Run(in <-chan int, out chan<- int) {
+	<-in
+	out <- 2
+}
+
+func main() {
+	in := make(chan int)
+	out := make(chan int)
+	producer(out)
+	consumer(in)
+	var w Worker
+	w.Run(in, out)
+}
+`)
+
+	parser := NewParser("example.com/chargs", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	inChannelID := channelNodeIDByName(result, "in (chan int)")
+	outChannelID := channelNodeIDByName(result, "out (chan int)")
+	require.NotEmpty(t, inChannelID)
+	require.NotEmpty(t, outChannelID)
+
+	producerID := "example.com/chargs.producer"
+	consumerID := "example.com/chargs.consumer"
+	runID := "example.com/chargs.example.com/chargs.Worker.Run"
+
+	assert.True(t, hasEdge(result, producerID, outChannelID, EdgeTypeSendsTo))
+	assert.True(t, hasEdge(result, consumerID, inChannelID, EdgeTypeReceivesFrom))
+	assert.True(t, hasEdge(result, runID, inChannelID, EdgeTypeReceivesFrom))
+	assert.True(t, hasEdge(result, runID, outChannelID, EdgeTypeSendsTo))
+}
+
 func TestParseWorkspaceDoesNotEmitExternalImplementsEdges(t *testing.T) {
 	withGoBuildCache(t)
 
@@ -777,4 +829,13 @@ func edgesBy(result *ParseResult, from, to string, edgeType EdgeType) []*Edge {
 		}
 	}
 	return edges
+}
+
+func channelNodeIDByName(result *ParseResult, name string) string {
+	for _, node := range result.Nodes {
+		if node.Type == NodeTypeChannel && node.Name == name {
+			return node.ID
+		}
+	}
+	return ""
 }

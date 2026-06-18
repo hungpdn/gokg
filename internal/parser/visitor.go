@@ -332,11 +332,22 @@ func (p *Parser) inspectFunctionBody(
 		case *ast.CallExpr:
 			if !goCalls[node] {
 				p.addCallEdge(pkg, currentFunc, node, createdBoundaryNodes, mu, result)
+				p.addChannelArgumentFlowEdges(pkg, node, currentFunc, filename, createdChannels, mu, result)
 			}
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(currentFunc, typ, mu, result)
 			p.addInstantiationEdge(currentFunc, typ, edgeOccurrence(pkg, node), mu, result)
+		case *ast.RangeStmt:
+			chanNodeID := p.resolveChannelNode(pkg, node.X, currentFunc, filename, createdChannels, mu, result)
+			if chanNodeID != "" {
+				appendEdge(mu, result, &Edge{
+					From:   currentFunc,
+					To:     chanNodeID,
+					Type:   EdgeTypeReceivesFrom,
+					RepoID: p.RepoID,
+				})
+			}
 		case *ast.SendStmt:
 			chanNodeID := p.resolveChannelNode(pkg, node.Chan, currentFunc, filename, createdChannels, mu, result)
 			if chanNodeID != "" {
@@ -363,6 +374,72 @@ func (p *Parser) inspectFunctionBody(
 
 		return true
 	})
+}
+
+func (p *Parser) addChannelArgumentFlowEdges(
+	pkg *packages.Package,
+	call *ast.CallExpr,
+	currentFunc string,
+	filename string,
+	createdChannels map[string]bool,
+	mu *sync.Mutex,
+	result *ParseResult,
+) {
+	calledObj := calledObjectFromCall(pkg, call)
+	calledID := getFuncID(calledObj)
+	if calledID == "" {
+		return
+	}
+
+	fn, ok := calledObj.(*types.Func)
+	if !ok {
+		return
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Params() == nil {
+		return
+	}
+
+	params := sig.Params()
+	for argIndex, arg := range call.Args {
+		paramIndex := argIndex
+		if sig.Variadic() && argIndex >= params.Len()-1 {
+			paramIndex = params.Len() - 1
+		}
+		if paramIndex < 0 || paramIndex >= params.Len() {
+			continue
+		}
+
+		paramChan, ok := channelType(params.At(paramIndex).Type())
+		if !ok {
+			continue
+		}
+		if _, ok := channelType(pkg.TypesInfo.TypeOf(arg)); !ok {
+			continue
+		}
+
+		argChannelID := p.resolveChannelNode(pkg, arg, currentFunc, filename, createdChannels, mu, result)
+		if argChannelID == "" {
+			continue
+		}
+
+		switch paramChan.Dir() {
+		case types.RecvOnly:
+			appendEdge(mu, result, &Edge{
+				From:   calledID,
+				To:     argChannelID,
+				Type:   EdgeTypeReceivesFrom,
+				RepoID: p.RepoID,
+			})
+		case types.SendOnly:
+			appendEdge(mu, result, &Edge{
+				From:   calledID,
+				To:     argChannelID,
+				Type:   EdgeTypeSendsTo,
+				RepoID: p.RepoID,
+			})
+		}
+	}
 }
 
 func (p *Parser) addGoroutineEdges(
@@ -415,6 +492,7 @@ func (p *Parser) addGoroutineEdges(
 			Occurrences: []EdgeOccurrence{edgeOccurrence(pkg, node.Call)},
 		})
 	}
+	p.addChannelArgumentFlowEdges(pkg, node.Call, currentFunc, filename, createdChannels, mu, result)
 
 	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok && fun.Body != nil {
 		p.inspectFunctionBody(pkg, fun.Body, goroutineID, filename, createdChannels, createdBoundaryNodes, mu, result)
@@ -509,6 +587,7 @@ func (p *Parser) addExpressionReferenceEdges(
 			return false
 		case *ast.CallExpr:
 			p.addCallEdge(pkg, from, node, createdBoundaryNodes, mu, result)
+			p.addChannelArgumentFlowEdges(pkg, node, from, filename, createdChannels, mu, result)
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(from, typ, mu, result)
@@ -604,6 +683,14 @@ func (p *Parser) resolveChannelNode(
 	}
 
 	return chanID
+}
+
+func channelType(typ types.Type) (*types.Chan, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	chanType, ok := typ.Underlying().(*types.Chan)
+	return chanType, ok
 }
 
 func channelNodeIdentity(pkg *packages.Package, obj types.Object, currentFunc string, name string) (string, [2]int) {
