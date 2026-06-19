@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -138,4 +139,27 @@ func TestExportJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(js, "{"))
 	assert.Contains(t, js, "\"ID\": \"A\"")
+}
+
+func TestExportJSONTo(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+
+	_, err := g.AddNode(ctx, &parser.Node{ID: "A", Name: "A"})
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "B", Name: "B"})
+	require.NoError(t, err)
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "A", To: "B", Type: parser.EdgeTypeCalls}))
+
+	var b strings.Builder
+	require.NoError(t, g.ExportJSONTo(&b))
+
+	var decoded struct {
+		Nodes []parser.Node `json:"nodes"`
+		Edges []parser.Edge `json:"edges"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(b.String()), &decoded))
+	require.Len(t, decoded.Nodes, 2)
+	require.Len(t, decoded.Edges, 1)
+	assert.Equal(t, parser.EdgeTypeCalls, decoded.Edges[0].Type)
 }

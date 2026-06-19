@@ -20,6 +20,13 @@ type ConcurrencyConnection struct {
 	Direction string       `json:"direction"`
 }
 
+type concurrencySeenKey struct {
+	direction string
+	fromID    int64
+	toID      int64
+	edgeType  parser.EdgeType
+}
+
 // Query returns a new QueryBuilder for the graph.
 func (g *Graph) Query() *QueryBuilder {
 	return &QueryBuilder{g: g}
@@ -104,7 +111,7 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 	}
 
 	connections := make([]ConcurrencyConnection, 0)
-	seen := make(map[string]bool)
+	seen := make(map[concurrencySeenKey]bool)
 
 	for toID, edges := range qb.g.edges[id] {
 		pNode, ok := qb.g.nodes[toID]
@@ -119,7 +126,7 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 				continue
 			}
 
-			key := fmt.Sprintf("out:%d:%s", toID, edge.Type)
+			key := concurrencySeenKey{direction: "outbound", fromID: id, toID: toID, edgeType: edge.Type}
 			if seen[key] {
 				continue
 			}
@@ -149,7 +156,7 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 				continue
 			}
 
-			key := fmt.Sprintf("in:%d:%s", fromID, edge.Type)
+			key := concurrencySeenKey{direction: "inbound", fromID: fromID, toID: id, edgeType: edge.Type}
 			if seen[key] {
 				continue
 			}
@@ -166,7 +173,7 @@ func (qb *QueryBuilder) appendCalledConcurrencyConnections(
 	callEdges []*parser.Edge,
 	direction string,
 	connections *[]ConcurrencyConnection,
-	seen map[string]bool,
+	seen map[concurrencySeenKey]bool,
 ) {
 	for _, callEdge := range callEdges {
 		if callEdge == nil || callEdge.Type != parser.EdgeTypeCalls {
@@ -180,7 +187,7 @@ func (qb *QueryBuilder) appendSpawnedConcurrencyConnections(
 	goroutineID int64,
 	spawnEdges []*parser.Edge,
 	connections *[]ConcurrencyConnection,
-	seen map[string]bool,
+	seen map[concurrencySeenKey]bool,
 ) {
 	for _, spawnEdge := range spawnEdges {
 		if spawnEdge == nil || spawnEdge.Type != parser.EdgeTypeSpawns {
@@ -196,7 +203,7 @@ func (qb *QueryBuilder) appendOutboundConcurrencyConnections(
 	fromID int64,
 	direction string,
 	connections *[]ConcurrencyConnection,
-	seen map[string]bool,
+	seen map[concurrencySeenKey]bool,
 ) {
 	for toID, edges := range qb.g.edges[fromID] {
 		pNode, ok := qb.g.nodes[toID]
@@ -207,7 +214,7 @@ func (qb *QueryBuilder) appendOutboundConcurrencyConnections(
 			if edge == nil || !isConcurrencyEdge(edge.Type) {
 				continue
 			}
-			key := fmt.Sprintf("%s:%d:%d:%s", direction, fromID, toID, edge.Type)
+			key := concurrencySeenKey{direction: direction, fromID: fromID, toID: toID, edgeType: edge.Type}
 			if seen[key] {
 				continue
 			}

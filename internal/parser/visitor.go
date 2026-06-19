@@ -438,17 +438,17 @@ func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 		return
 	}
 
-	observed := make(map[string]map[EdgeType]bool)
-	existing := make(map[string]bool)
+	observed := make(map[channelFlowKey]map[EdgeType]bool)
+	existing := make(map[edgeIdentityKey]bool)
 	for _, edge := range result.Edges {
 		if edge == nil {
 			continue
 		}
-		existing[edgeIdentity(edge.From, edge.To, edge.Type)] = true
+		existing[edgeIdentityKey{from: edge.From, to: edge.To, edgeType: edge.Type}] = true
 		if edge.Type != EdgeTypeSendsTo && edge.Type != EdgeTypeReceivesFrom {
 			continue
 		}
-		key := channelFlowKey(edge.From, edge.To)
+		key := channelFlowKey{from: edge.From, to: edge.To}
 		if observed[key] == nil {
 			observed[key] = make(map[EdgeType]bool)
 		}
@@ -457,10 +457,10 @@ func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 
 	for _, flow := range result.channelArgFlows {
 		for _, edgeType := range []EdgeType{EdgeTypeSendsTo, EdgeTypeReceivesFrom} {
-			if !observed[channelFlowKey(flow.CalleeID, flow.ParamChannelID)][edgeType] {
+			if !observed[channelFlowKey{from: flow.CalleeID, to: flow.ParamChannelID}][edgeType] {
 				continue
 			}
-			key := edgeIdentity(flow.CalleeID, flow.ArgChannelID, edgeType)
+			key := edgeIdentityKey{from: flow.CalleeID, to: flow.ArgChannelID, edgeType: edgeType}
 			if existing[key] {
 				continue
 			}
@@ -475,12 +475,15 @@ func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 	}
 }
 
-func channelFlowKey(from, to string) string {
-	return BuildID(from, "\x00", to)
+type channelFlowKey struct {
+	from string
+	to   string
 }
 
-func edgeIdentity(from string, to string, edgeType EdgeType) string {
-	return BuildID(from, "\x00", to, "\x00", string(edgeType))
+type edgeIdentityKey struct {
+	from     string
+	to       string
+	edgeType EdgeType
 }
 
 func (p *Parser) addGoroutineEdges(

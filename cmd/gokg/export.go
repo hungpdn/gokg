@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/hungpdn/gokg/internal/graph"
@@ -14,6 +16,8 @@ var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export the parsed graph into various formats (json, mermaid, dot)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logOut := cmd.ErrOrStderr()
+		dataOut := cmd.OutOrStdout()
 		dbPath, _ := cmd.Flags().GetString("db")
 		format, _ := cmd.Flags().GetString("format")
 		outFile, _ := cmd.Flags().GetString("out")
@@ -28,14 +32,14 @@ var exportCmd = &cobra.Command{
 				return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
 			}
 
-			fmt.Printf("Loading workspace graph from %q...\n", workspaceName)
+			fmt.Fprintf(logOut, "Loading workspace graph from %q...\n", workspaceName)
 			g, err = loadWorkspaceGraph(ctx, workspaceName)
 			if err != nil {
 				return err
 			}
 		} else {
-			fmt.Printf("Loading graph from %s...\n", dbPath)
-			store, err := storage.NewBadgerStorage(dbPath)
+			fmt.Fprintf(logOut, "Loading graph from %s...\n", dbPath)
+			store, err := storage.NewBadgerStorageReadOnly(dbPath)
 			if err != nil {
 				return fmt.Errorf("failed to open storage: %w", err)
 			}
@@ -47,29 +51,45 @@ var exportCmd = &cobra.Command{
 			}
 		}
 
-		var output string
+		var output io.Writer = dataOut
+		var outputFile *os.File
+		if outFile != "" {
+			outputFile, err = os.Create(outFile)
+			if err != nil {
+				return fmt.Errorf("failed to open output file: %w", err)
+			}
+			defer func() {
+				if outputFile != nil {
+					_ = outputFile.Close()
+				}
+			}()
+			output = outputFile
+		}
+
+		bufferedOutput := bufio.NewWriter(output)
 		switch format {
 		case "json":
-			output, err = g.ExportJSON()
-			if err != nil {
-				return err
-			}
+			err = g.ExportJSONTo(bufferedOutput)
 		case "mermaid":
-			output = g.ExportMermaid()
+			err = g.ExportMermaidTo(bufferedOutput)
 		case "dot":
-			output = g.ExportDot()
+			err = g.ExportDotTo(bufferedOutput)
 		default:
 			return fmt.Errorf("unknown format: %s", format)
 		}
+		if err != nil {
+			return err
+		}
+		if err := bufferedOutput.Flush(); err != nil {
+			return fmt.Errorf("failed to write output: %w", err)
+		}
 
 		if outFile != "" {
-			err = os.WriteFile(outFile, []byte(output), 0644)
-			if err != nil {
-				return fmt.Errorf("failed to write output: %w", err)
+			if err := outputFile.Close(); err != nil {
+				return fmt.Errorf("failed to close output file: %w", err)
 			}
-			fmt.Printf("Exported successfully to %s\n", outFile)
-		} else {
-			fmt.Println(output)
+			outputFile = nil
+			fmt.Fprintf(dataOut, "Exported successfully to %s\n", outFile)
 		}
 
 		return nil

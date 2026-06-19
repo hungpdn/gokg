@@ -1,66 +1,111 @@
 package graph
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
 	"github.com/hungpdn/gokg/internal/parser"
 )
 
+var (
+	dotReplacer = strings.NewReplacer(
+		"\\", "\\\\",
+		`"`, `\"`,
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+	mermaidLabelReplacer = strings.NewReplacer(
+		"\\", "\\\\",
+		`"`, `\"`,
+		"\r", `\r`,
+		"\n", `\n`,
+	)
+)
+
 // ExportJSON exports the graph to JSON format.
 func (g *Graph) ExportJSON() (string, error) {
+	var b strings.Builder
+	if err := g.ExportJSONTo(&b); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// ExportJSONTo streams the graph as JSON without materializing full node and
+// edge slices or a full output byte buffer.
+func (g *Graph) ExportJSONTo(w io.Writer) error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	var out struct {
-		Nodes []*parser.Node `json:"nodes"`
-		Edges []*parser.Edge `json:"edges"`
-	}
-	out.Nodes = make([]*parser.Node, 0, len(g.nodes))
-	out.Edges = make([]*parser.Edge, 0, g.edgeCountLocked())
-
+	ew := exportWriter{w: w}
+	ew.WriteString("{\n  \"nodes\": [")
+	wroteNodes := false
 	for _, node := range g.nodes {
-		out.Nodes = append(out.Nodes, node)
+		if node == nil {
+			continue
+		}
+		if wroteNodes {
+			ew.WriteString(",\n")
+		} else {
+			ew.WriteString("\n")
+			wroteNodes = true
+		}
+		writeIndentedJSONValue(&ew, node, "    ")
+	}
+	if wroteNodes {
+		ew.WriteString("\n  ")
 	}
 
+	ew.WriteString("],\n  \"edges\": [")
+	wroteEdges := false
 	for _, edgeMap := range g.edges {
 		for _, edges := range edgeMap {
 			for _, edge := range edges {
-				out.Edges = append(out.Edges, edge)
+				if edge == nil {
+					continue
+				}
+				if wroteEdges {
+					ew.WriteString(",\n")
+				} else {
+					ew.WriteString("\n")
+					wroteEdges = true
+				}
+				writeIndentedJSONValue(&ew, edge, "    ")
 			}
 		}
 	}
-
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return "", err
+	if wroteEdges {
+		ew.WriteString("\n  ")
 	}
-	return string(data), nil
-}
-
-func (g *Graph) edgeCountLocked() int {
-	count := 0
-	for _, edgeMap := range g.edges {
-		for _, edges := range edgeMap {
-			count += len(edges)
-		}
-	}
-	return count
+	ew.WriteString("]\n}")
+	return ew.Err()
 }
 
 // ExportMermaid exports the graph to Mermaid flowchart format.
 func (g *Graph) ExportMermaid() string {
+	var b strings.Builder
+	_ = g.ExportMermaidTo(&b)
+	return b.String()
+}
+
+// ExportMermaidTo streams the graph to Mermaid flowchart format.
+func (g *Graph) ExportMermaidTo(w io.Writer) error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	var b strings.Builder
-	b.WriteString("flowchart TD\n")
+	ew := exportWriter{w: w}
+	ew.WriteString("flowchart TD\n")
 
 	for _, node := range g.nodes {
 		sid := mermaidSafeID(node.ID)
-		b.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", sid, escapeMermaidLabel(nodeLabel(node.Name, string(node.Type)))))
+		ew.WriteString("    ")
+		ew.WriteString(sid)
+		ew.WriteString("[\"")
+		writeEscapedMermaidLabel(&ew, node.Name, string(node.Type))
+		ew.WriteString("\"]\n")
 	}
 
 	for _, edgeMap := range g.edges {
@@ -68,50 +113,79 @@ func (g *Graph) ExportMermaid() string {
 			for _, edge := range edges {
 				sFrom := mermaidSafeID(edge.From)
 				sTo := mermaidSafeID(edge.To)
-				b.WriteString(fmt.Sprintf("    %s -->|%s| %s\n", sFrom, escapeMermaidLabel(string(edge.Type)), sTo))
+				ew.WriteString("    ")
+				ew.WriteString(sFrom)
+				ew.WriteString(" -->|")
+				writeEscapedMermaidString(&ew, string(edge.Type))
+				ew.WriteString("| ")
+				ew.WriteString(sTo)
+				ew.WriteByte('\n')
 			}
 		}
 	}
 
-	return b.String()
+	return ew.Err()
 }
 
 // ExportDot exports the graph to Graphviz DOT format.
 func (g *Graph) ExportDot() string {
+	var b strings.Builder
+	_ = g.ExportDotTo(&b)
+	return b.String()
+}
+
+// ExportDotTo streams the graph to Graphviz DOT format.
+func (g *Graph) ExportDotTo(w io.Writer) error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	var b strings.Builder
-	b.WriteString("digraph G {\n")
-	b.WriteString("  node [shape=box];\n")
-
-	safeID := func(id string) string {
-		return dotQuote(id)
-	}
+	ew := exportWriter{w: w}
+	ew.WriteString("digraph G {\n")
+	ew.WriteString("  node [shape=box];\n")
 
 	for _, node := range g.nodes {
-		b.WriteString(fmt.Sprintf("  %s [label=%s];\n", safeID(node.ID), dotQuote(nodeLabel(node.Name, string(node.Type)))))
+		ew.WriteString("  ")
+		writeDotQuoted(&ew, node.ID)
+		ew.WriteString(" [label=")
+		writeDotLabelQuoted(&ew, node.Name, string(node.Type))
+		ew.WriteString("];\n")
 	}
 
 	for _, edgeMap := range g.edges {
 		for _, edges := range edgeMap {
 			for _, edge := range edges {
-				b.WriteString(fmt.Sprintf("  %s -> %s %s;\n", safeID(edge.From), safeID(edge.To), dotEdgeAttrs(edge)))
+				ew.WriteString("  ")
+				writeDotQuoted(&ew, edge.From)
+				ew.WriteString(" -> ")
+				writeDotQuoted(&ew, edge.To)
+				ew.WriteByte(' ')
+				writeDotEdgeAttrs(&ew, edge)
+				ew.WriteString(";\n")
 			}
 		}
 	}
 
-	b.WriteString("}\n")
-	return b.String()
+	ew.WriteString("}\n")
+	return ew.Err()
 }
 
 func dotEdgeAttrs(edge *parser.Edge) string {
-	attrs := []string{fmt.Sprintf("label=%s", dotQuote(string(edge.Type)))}
+	var b strings.Builder
+	ew := exportWriter{w: &b}
+	writeDotEdgeAttrs(&ew, edge)
+	return b.String()
+}
+
+func writeDotEdgeAttrs(ew *exportWriter, edge *parser.Edge) {
+	ew.WriteString("[label=")
+	writeDotQuoted(ew, string(edge.Type))
 	if len(edge.Occurrences) > 0 {
-		attrs = append(attrs, fmt.Sprintf("occurrences=%s", dotQuote(fmt.Sprint(len(edge.Occurrences)))))
-		attrs = append(attrs, fmt.Sprintf("lines=%s", dotQuote(edgeOccurrenceLines(edge.Occurrences))))
+		ew.WriteString(", occurrences=")
+		writeDotQuoted(ew, strconv.Itoa(len(edge.Occurrences)))
+		ew.WriteString(", lines=")
+		writeDotQuoted(ew, edgeOccurrenceLines(edge.Occurrences))
 	}
-	return "[" + strings.Join(attrs, ", ") + "]"
+	ew.WriteByte(']')
 }
 
 func edgeOccurrenceLines(occurrences []parser.EdgeOccurrence) string {
@@ -130,20 +204,14 @@ func edgeOccurrenceLines(occurrences []parser.EdgeOccurrence) string {
 }
 
 func dotQuote(s string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		`"`, `\"`,
-		"\r", `\r`,
-		"\n", `\n`,
-	)
-	return `"` + replacer.Replace(s) + `"`
+	return `"` + dotReplacer.Replace(s) + `"`
 }
 
 func nodeLabel(name, nodeType string) string {
 	if nodeType == "" {
 		return name
 	}
-	return fmt.Sprintf("%s:%s", name, nodeType)
+	return name + ":" + nodeType
 }
 
 func mermaidSafeID(id string) string {
@@ -170,11 +238,92 @@ func isASCIIAlphaNum(r rune) bool {
 }
 
 func escapeMermaidLabel(label string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		`"`, `\"`,
-		"\r", `\r`,
-		"\n", `\n`,
-	)
-	return replacer.Replace(label)
+	return mermaidLabelReplacer.Replace(label)
+}
+
+type exportWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *exportWriter) WriteString(s string) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = io.WriteString(w.w, s)
+}
+
+func (w *exportWriter) WriteByte(b byte) {
+	if w.err != nil {
+		return
+	}
+	var buf [1]byte
+	buf[0] = b
+	_, w.err = w.w.Write(buf[:])
+}
+
+func (w *exportWriter) WriteBytes(data []byte) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = w.w.Write(data)
+}
+
+func (w *exportWriter) WriteReplaced(replacer *strings.Replacer, s string) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = replacer.WriteString(w.w, s)
+}
+
+func (w *exportWriter) Err() error {
+	return w.err
+}
+
+func writeIndentedJSONValue(w *exportWriter, value interface{}, indent string) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		w.err = err
+		return
+	}
+
+	for len(data) > 0 {
+		w.WriteString(indent)
+		lineEnd := bytes.IndexByte(data, '\n')
+		if lineEnd < 0 {
+			w.WriteBytes(data)
+			return
+		}
+		w.WriteBytes(data[:lineEnd])
+		w.WriteByte('\n')
+		data = data[lineEnd+1:]
+	}
+}
+
+func writeDotQuoted(w *exportWriter, s string) {
+	w.WriteByte('"')
+	w.WriteReplaced(dotReplacer, s)
+	w.WriteByte('"')
+}
+
+func writeDotLabelQuoted(w *exportWriter, name string, nodeType string) {
+	w.WriteByte('"')
+	w.WriteReplaced(dotReplacer, name)
+	if nodeType != "" {
+		w.WriteByte(':')
+		w.WriteReplaced(dotReplacer, nodeType)
+	}
+	w.WriteByte('"')
+}
+
+func writeEscapedMermaidLabel(w *exportWriter, name string, nodeType string) {
+	w.WriteReplaced(mermaidLabelReplacer, name)
+	if nodeType != "" {
+		w.WriteByte(':')
+		w.WriteReplaced(mermaidLabelReplacer, nodeType)
+	}
+}
+
+func writeEscapedMermaidString(w *exportWriter, s string) {
+	w.WriteReplaced(mermaidLabelReplacer, s)
 }
