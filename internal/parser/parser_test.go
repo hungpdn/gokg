@@ -426,6 +426,74 @@ func main() {
 	assert.True(t, hasEdge(result, goroutineID, helperID, EdgeTypeCalls))
 }
 
+func TestParseWorkspaceKeepsSameLineGoroutinesDistinct(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/samelinego\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+func a() {}
+func b() {}
+
+func main() { go a(); go b() }
+`)
+
+	parser := NewParser("example.com/samelinego", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	mainID := "example.com/samelinego.main"
+	var goroutineIDs []string
+	for _, node := range result.Nodes {
+		if node.Type == NodeTypeGoroutine && strings.HasPrefix(node.ID, mainID+".goroutine_L") {
+			goroutineIDs = append(goroutineIDs, node.ID)
+		}
+	}
+	require.Len(t, goroutineIDs, 2)
+	assert.NotEqual(t, goroutineIDs[0], goroutineIDs[1])
+
+	aID := "example.com/samelinego.a"
+	bID := "example.com/samelinego.b"
+	assert.True(t, hasEdge(result, goroutineIDs[0], aID, EdgeTypeCalls) || hasEdge(result, goroutineIDs[1], aID, EdgeTypeCalls))
+	assert.True(t, hasEdge(result, goroutineIDs[0], bID, EdgeTypeCalls) || hasEdge(result, goroutineIDs[1], bID, EdgeTypeCalls))
+}
+
+func TestParseWorkspacePropagatesGoFuncLiteralChannelArguments(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/gofuncch\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package main
+
+func main() {
+	ch := make(chan int)
+	go func(in <-chan int) {
+		<-in
+	}(ch)
+}
+`)
+
+	parser := NewParser("example.com/gofuncch", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	mainID := "example.com/gofuncch.main"
+	chID := channelNodeIDByName(result, "ch (chan int)")
+	require.NotEmpty(t, chID)
+
+	var goroutineID string
+	for _, node := range result.Nodes {
+		if node.Type == NodeTypeGoroutine && strings.HasPrefix(node.ID, mainID+".goroutine_L") {
+			goroutineID = node.ID
+			break
+		}
+	}
+	require.NotEmpty(t, goroutineID)
+	assert.True(t, hasEdge(result, mainID, goroutineID, EdgeTypeSpawns))
+	assert.True(t, hasEdge(result, goroutineID, chID, EdgeTypeReceivesFrom))
+}
+
 func TestParseWorkspaceUsesDeclarationIdentityForPackageChannels(t *testing.T) {
 	withGoBuildCache(t)
 

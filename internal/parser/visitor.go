@@ -333,6 +333,7 @@ func (p *Parser) inspectFunctionBody(
 			if !goCalls[node] {
 				p.addCallEdge(pkg, currentFunc, node, createdBoundaryNodes, mu, result)
 				p.addChannelArgumentFlowEdges(pkg, node, currentFunc, filename, createdChannels, mu, result)
+				p.addFuncLiteralChannelArgumentFlowEdges(pkg, node, currentFunc, currentFunc, filename, createdChannels, mu, result)
 			}
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
@@ -433,6 +434,64 @@ func (p *Parser) addChannelArgumentFlowEdges(
 	}
 }
 
+func (p *Parser) addFuncLiteralChannelArgumentFlowEdges(
+	pkg *packages.Package,
+	call *ast.CallExpr,
+	calleeID string,
+	argContextFunc string,
+	filename string,
+	createdChannels map[string]bool,
+	mu *sync.Mutex,
+	result *ParseResult,
+) {
+	if call == nil || calleeID == "" {
+		return
+	}
+	fun, ok := call.Fun.(*ast.FuncLit)
+	if !ok || fun.Type == nil || fun.Type.Params == nil {
+		return
+	}
+
+	argIndex := 0
+	for _, field := range fun.Type.Params.List {
+		if len(field.Names) == 0 {
+			argIndex++
+			continue
+		}
+		for _, name := range field.Names {
+			if argIndex >= len(call.Args) {
+				return
+			}
+			arg := call.Args[argIndex]
+			argIndex++
+
+			paramObj := pkg.TypesInfo.Defs[name]
+			if paramObj == nil {
+				continue
+			}
+			if _, ok := channelType(paramObj.Type()); !ok {
+				continue
+			}
+			if _, ok := channelType(pkg.TypesInfo.TypeOf(arg)); !ok {
+				continue
+			}
+
+			argChannelID := p.resolveChannelNode(pkg, arg, argContextFunc, filename, createdChannels, mu, result)
+			if argChannelID == "" {
+				continue
+			}
+
+			paramChannelID, _ := channelNodeIdentity(pkg, paramObj, calleeID, name.Name)
+			appendChannelArgFlow(mu, result, channelArgFlow{
+				CalleeID:       calleeID,
+				ParamChannelID: paramChannelID,
+				ArgChannelID:   argChannelID,
+				RepoID:         p.RepoID,
+			})
+		}
+	}
+}
+
 func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 	if result == nil || len(result.channelArgFlows) == 0 {
 		return
@@ -502,8 +561,10 @@ func (p *Parser) addGoroutineEdges(
 		return
 	}
 
-	line := pkg.Fset.Position(node.Pos()).Line
-	goroutineID := fmt.Sprintf("%s.goroutine_L%d", currentFunc, line)
+	pos := pkg.Fset.Position(node.Pos())
+	line := pos.Line
+	column := pos.Column
+	goroutineID := fmt.Sprintf("%s.goroutine_L%d_C%d", currentFunc, line, column)
 	goCalls[node.Call] = true
 	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok {
 		goFuncLits[fun] = true
@@ -512,7 +573,7 @@ func (p *Parser) addGoroutineEdges(
 	appendNode(mu, result, &Node{
 		ID:       goroutineID,
 		Type:     NodeTypeGoroutine,
-		Name:     fmt.Sprintf("goroutine_L%d", line),
+		Name:     fmt.Sprintf("goroutine_L%d_C%d", line, column),
 		PkgPath:  packageGraphPath(pkg),
 		FilePath: filename,
 		Lines:    [2]int{line, line},
@@ -537,6 +598,7 @@ func (p *Parser) addGoroutineEdges(
 		})
 	}
 	p.addChannelArgumentFlowEdges(pkg, node.Call, currentFunc, filename, createdChannels, mu, result)
+	p.addFuncLiteralChannelArgumentFlowEdges(pkg, node.Call, goroutineID, currentFunc, filename, createdChannels, mu, result)
 
 	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok && fun.Body != nil {
 		p.inspectFunctionBody(pkg, fun.Body, goroutineID, filename, createdChannels, createdBoundaryNodes, mu, result)

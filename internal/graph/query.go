@@ -188,6 +188,7 @@ func (qb *QueryBuilder) appendSpawnedConcurrencyConnections(
 		if spawnEdge == nil || spawnEdge.Type != parser.EdgeTypeSpawns {
 			continue
 		}
+		qb.appendOutboundConcurrencyConnections(goroutineID, "via_goroutine", connections, seen)
 		for calleeID, edges := range qb.g.edges[goroutineID] {
 			qb.appendCalledConcurrencyConnections(calleeID, edges, "via_goroutine", connections, seen)
 		}

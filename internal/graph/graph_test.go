@@ -234,6 +234,29 @@ func TestConcurrencyGraphIncludesCalledFunctionChannelFlow(t *testing.T) {
 	assert.True(t, hasConcurrencyConnection(connections, "main.ch", parser.EdgeTypeReceivesFrom, "via_call"))
 }
 
+func TestConcurrencyGraphIncludesDirectGoroutineChannelFlow(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	nodes := []*parser.Node{
+		{ID: "main", Type: parser.NodeTypeFunc, Name: "main"},
+		{ID: "main.goroutine_L4_C2", Type: parser.NodeTypeGoroutine, Name: "goroutine_L4_C2"},
+		{ID: "main.ch", Type: parser.NodeTypeChannel, Name: "ch (chan int)"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "main", To: "main.goroutine_L4_C2", Type: parser.EdgeTypeSpawns}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "main.goroutine_L4_C2", To: "main.ch", Type: parser.EdgeTypeReceivesFrom}))
+
+	connections, err := g.Query().GetConcurrencyGraph("main")
+	require.NoError(t, err)
+	assert.True(t, hasConcurrencyConnection(connections, "main.goroutine_L4_C2", parser.EdgeTypeSpawns, "outbound"))
+	assert.True(t, hasConcurrencyConnection(connections, "main.ch", parser.EdgeTypeReceivesFrom, "via_goroutine"))
+}
+
 func TestSearchNodesCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)
