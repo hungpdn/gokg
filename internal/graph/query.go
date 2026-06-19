@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/hungpdn/gokg/internal/parser"
@@ -34,22 +35,26 @@ func (g *Graph) Query() *QueryBuilder {
 	return &QueryBuilder{g: g}
 }
 
-// GetDependencies returns all nodes that the given node ID calls or imports.
+// GetDependencies returns all nodes connected by dependency edges from nodeID.
 func (qb *QueryBuilder) GetDependencies(nodeID string) ([]*parser.Node, error) {
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
-	id, exists := qb.g.nodeMap[nodeID]
-	if !exists {
-		return nil, fmt.Errorf("node not found: %s", nodeID)
+	id, err := qb.requireNodeIDLocked(nodeID)
+	if err != nil {
+		return nil, err
 	}
 
 	deps := make([]*parser.Node, 0, len(qb.g.edges[id]))
-	for toID := range qb.g.edges[id] {
-		if pNode, ok := qb.g.nodes[toID]; ok {
+	for toID, edges := range qb.g.edges[id] {
+		if !hasDependencyEdge(edges) {
+			continue
+		}
+		if pNode, ok := qb.g.nodes[toID]; ok && pNode != nil {
 			deps = append(deps, pNode)
 		}
 	}
+	sortNodesByID(deps)
 	return deps, nil
 }
 
@@ -58,20 +63,22 @@ func (qb *QueryBuilder) GetBlastRadius(nodeID string) ([]*parser.Node, error) {
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
-	id, exists := qb.g.nodeMap[nodeID]
-	if !exists {
-		return nil, fmt.Errorf("node not found: %s", nodeID)
+	id, err := qb.requireNodeIDLocked(nodeID)
+	if err != nil {
+		return nil, err
 	}
 
 	var blast []*parser.Node
 	for fromID, outEdges := range qb.g.edges {
-		if _, ok := outEdges[id]; !ok {
+		edges, ok := outEdges[id]
+		if !ok || !hasDependencyEdge(edges) {
 			continue
 		}
-		if pNode, ok := qb.g.nodes[fromID]; ok {
+		if pNode, ok := qb.g.nodes[fromID]; ok && pNode != nil {
 			blast = append(blast, pNode)
 		}
 	}
+	sortNodesByID(blast)
 	return blast, nil
 }
 
@@ -100,9 +107,9 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
-	id, exists := qb.g.nodeMap[nodeID]
-	if !exists {
-		return nil, fmt.Errorf("node not found: %s", nodeID)
+	id, err := qb.requireNodeIDLocked(nodeID)
+	if err != nil {
+		return nil, err
 	}
 
 	connections := make([]ConcurrencyConnection, 0)
@@ -235,8 +242,8 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
-	ifaceNumID, exists := qb.g.nodeMap[interfaceID]
-	if !exists {
+	ifaceNumID, err := qb.requireNodeIDLocked(interfaceID)
+	if err != nil {
 		return nil, fmt.Errorf("interface node not found: %s", interfaceID)
 	}
 
@@ -250,13 +257,14 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 	for fromNumID, outEdges := range qb.g.edges {
 		for _, edge := range outEdges[ifaceNumID] {
 			if edge != nil && edge.Type == parser.EdgeTypeImplements {
-				if pNode, ok := qb.g.nodes[fromNumID]; ok {
+				if pNode, ok := qb.g.nodes[fromNumID]; ok && pNode != nil {
 					impls = append(impls, pNode)
 				}
 				break
 			}
 		}
 	}
+	sortNodesByID(impls)
 	return impls, nil
 }
 
@@ -321,7 +329,7 @@ type PathResult struct {
 	EdgeType string       `json:"edge_type,omitempty"` // edge connecting this node to the next
 }
 
-// FindPath finds the shortest path between two nodes using BFS.
+// FindPath finds the shortest call path between two nodes using BFS.
 func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error) {
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
@@ -361,8 +369,8 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 		if i < len(pathIDs)-1 {
 			nextNumID := pathIDs[i+1]
 			if edgeMap, ok := qb.g.edges[numID]; ok {
-				if edges, ok := edgeMap[nextNumID]; ok && len(edges) > 0 {
-					pr.EdgeType = string(edges[0].Type)
+				if edges, ok := edgeMap[nextNumID]; ok {
+					pr.EdgeType = pathEdgeType(edges)
 				}
 			}
 		}
@@ -384,7 +392,10 @@ func (qb *QueryBuilder) shortestPathIDs(sourceID, targetID int64) []int64 {
 
 	for head := 0; head < len(queue); head++ {
 		currentID := queue[head]
-		for nextID := range qb.g.edges[currentID] {
+		for nextID, edges := range qb.g.edges[currentID] {
+			if !hasCallEdge(edges) {
+				continue
+			}
 			if seen[nextID] || qb.g.nodes[nextID] == nil {
 				continue
 			}
@@ -398,6 +409,56 @@ func (qb *QueryBuilder) shortestPathIDs(sourceID, targetID int64) []int64 {
 	}
 
 	return nil
+}
+
+func (qb *QueryBuilder) requireNodeIDLocked(nodeID string) (int64, error) {
+	id, exists := qb.g.nodeMap[nodeID]
+	if !exists || qb.g.nodes[id] == nil {
+		return 0, fmt.Errorf("node not found: %s", nodeID)
+	}
+	return id, nil
+}
+
+func hasDependencyEdge(edges []*parser.Edge) bool {
+	for _, edge := range edges {
+		if edge != nil && isDependencyEdge(edge.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCallEdge(edges []*parser.Edge) bool {
+	for _, edge := range edges {
+		if edge != nil && edge.Type == parser.EdgeTypeCalls {
+			return true
+		}
+	}
+	return false
+}
+
+func pathEdgeType(edges []*parser.Edge) string {
+	for _, edge := range edges {
+		if edge != nil && edge.Type == parser.EdgeTypeCalls {
+			return string(parser.EdgeTypeCalls)
+		}
+	}
+	return ""
+}
+
+func isDependencyEdge(edgeType parser.EdgeType) bool {
+	switch edgeType {
+	case parser.EdgeTypeCalls, parser.EdgeTypeImports, parser.EdgeTypeReferences, parser.EdgeTypeInstantiates:
+		return true
+	default:
+		return false
+	}
+}
+
+func sortNodesByID(nodes []*parser.Node) {
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
 }
 
 func reconstructPathIDs(sourceID, targetID int64, prev map[int64]int64) []int64 {
@@ -427,6 +488,9 @@ func (qb *QueryBuilder) SearchNodes(query string) ([]*parser.Node, error) {
 	results := make([]*parser.Node, 0, maxSearchResults)
 
 	for _, pNode := range qb.g.nodes {
+		if pNode == nil {
+			continue
+		}
 		if containsCaseInsensitive(pNode.Name, lowerQuery, asciiQuery) || containsCaseInsensitive(pNode.ID, lowerQuery, asciiQuery) {
 			results = append(results, pNode)
 			if len(results) >= maxSearchResults {

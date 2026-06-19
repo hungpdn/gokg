@@ -12,7 +12,7 @@ Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understa
 ## Key Features
 
 - **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, external boundaries, repos, and workspaces.
-- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
+- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
 - **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` for IDEs and coding agents.
 - **Real-time incremental updates**: Optional file watcher reparses changed packages and merges updates into the live graph.
@@ -124,7 +124,7 @@ When connected through `gokg mcp`, GoKG exposes 9 tools:
 
 | Tool | Description |
 |---|---|
-| `get_dependencies` | All nodes a function calls or imports |
+| `get_dependencies` | Nodes reached by dependency edges (`CALLS`, `IMPORTS`, `REFERENCES`, `INSTANTIATES`) |
 | `get_blast_radius` | All nodes that depend on a given node |
 | `get_concurrency_flow` | Goroutines and channels connected to a node |
 | `get_concurrency_graph` | Goroutine/channel topology connected to a function |
@@ -146,7 +146,7 @@ MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
 
 **Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `VAR`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`
 
-**Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`
+**Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`
 
 **Node properties:** `Name`, `ID`, `PkgPath`, `FilePath`, `Type`, `RepoID`
 

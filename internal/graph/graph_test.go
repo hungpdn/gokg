@@ -43,7 +43,8 @@ func TestGraphConstructionAndQuery(t *testing.T) {
 	// Test GetDependencies
 	deps, err := qb.GetDependencies("funcA")
 	require.NoError(t, err)
-	assert.Len(t, deps, 2)
+	require.Len(t, deps, 1)
+	assert.Equal(t, "funcB", deps[0].ID)
 
 	// Test GetBlastRadius
 	blast, err := qb.GetBlastRadius("funcB")
@@ -56,6 +57,64 @@ func TestGraphConstructionAndQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, flows, 1)
 	assert.Equal(t, "chanC", flows[0].ID)
+}
+
+func TestDependenciesAndBlastRadiusUseSemanticDependencyEdges(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	nodes := []*parser.Node{
+		{ID: "file.go", Type: parser.NodeTypeFile, Name: "file.go"},
+		{ID: "pkg.Func", Type: parser.NodeTypeFunc, Name: "Func"},
+		{ID: "pkg.Called", Type: parser.NodeTypeFunc, Name: "Called"},
+		{ID: "fmt", Type: parser.NodeTypeBoundary, Name: "fmt"},
+		{ID: "pkg.Type", Type: parser.NodeTypeStruct, Name: "Type"},
+		{ID: "pkg.Channel", Type: parser.NodeTypeChannel, Name: "ch"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "file.go", To: "pkg.Func", Type: parser.EdgeTypeContains}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Func", To: "pkg.Called", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Func", To: "fmt", Type: parser.EdgeTypeImports}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Func", To: "pkg.Type", Type: parser.EdgeTypeReferences}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Func", To: "pkg.Type", Type: parser.EdgeTypeInstantiates}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Func", To: "pkg.Channel", Type: parser.EdgeTypeSendsTo}))
+
+	deps, err := g.Query().GetDependencies("pkg.Func")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"fmt", "pkg.Called", "pkg.Type"}, graphNodeIDs(deps))
+
+	blast, err := g.Query().GetBlastRadius("pkg.Channel")
+	require.NoError(t, err)
+	assert.Empty(t, blast, "channel flow edges belong to concurrency queries, not dependency blast radius")
+}
+
+func TestQueryMethodsTreatRemovedPackageNodesAsMissing(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	require.NoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkg.Func", Type: parser.NodeTypeFunc, Name: "Func", PkgPath: "pkg"},
+			{ID: "pkg.Other", Type: parser.NodeTypeFunc, Name: "Other", PkgPath: "pkg"},
+		},
+		Edges: []*parser.Edge{
+			{From: "pkg.Func", To: "pkg.Other", Type: parser.EdgeTypeCalls},
+		},
+	}))
+
+	require.NoError(t, g.RemovePackage(ctx, "pkg"))
+
+	_, err := g.Query().GetDependencies("pkg.Func")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "node not found")
+
+	_, err = g.Query().GetConcurrencyGraph("pkg.Func")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "node not found")
 }
 
 func TestAddEdgeMergesCallOccurrences(t *testing.T) {
@@ -296,6 +355,35 @@ func TestFindPathTreatsRemovedNodesAsMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "target node not found")
 }
 
+func TestFindPathUsesCallEdgesOnly(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	for _, node := range []*parser.Node{
+		{ID: "A", Type: parser.NodeTypeFunc, Name: "A"},
+		{ID: "B", Type: parser.NodeTypeFunc, Name: "B"},
+		{ID: "C", Type: parser.NodeTypeFunc, Name: "C"},
+		{ID: "D", Type: parser.NodeTypeFunc, Name: "D"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "A", To: "B", Type: parser.EdgeTypeContains}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "B", To: "C", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "A", To: "D", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "D", To: "C", Type: parser.EdgeTypeCalls}))
+
+	path, err := g.Query().FindPath("A", "C")
+	require.NoError(t, err)
+	require.Len(t, path, 3)
+	assert.Equal(t, "A", path[0].Node.ID)
+	assert.Equal(t, "D", path[1].Node.ID)
+	assert.Equal(t, "C", path[2].Node.ID)
+	assert.Equal(t, "CALLS", path[0].EdgeType)
+	assert.Equal(t, "CALLS", path[1].EdgeType)
+}
+
 func TestBuildFromParseResultsMergesCrossRepoEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)
@@ -531,6 +619,16 @@ func hasConcurrencyConnection(connections []ConcurrencyConnection, nodeID string
 		}
 	}
 	return false
+}
+
+func graphNodeIDs(nodes []*parser.Node) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node != nil {
+			ids = append(ids, node.ID)
+		}
+	}
+	return ids
 }
 
 type failingStorage struct {

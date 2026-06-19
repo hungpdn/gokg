@@ -497,26 +497,23 @@ func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 		return
 	}
 
-	observed := make(map[channelFlowKey]map[EdgeType]bool)
+	observed := make(map[channelFlowKey]channelFlowMask)
 	existing := make(map[edgeIdentityKey]bool)
 	for _, edge := range result.Edges {
 		if edge == nil {
 			continue
 		}
 		existing[edgeIdentityKey{from: edge.From, to: edge.To, edgeType: edge.Type}] = true
-		if edge.Type != EdgeTypeSendsTo && edge.Type != EdgeTypeReceivesFrom {
+		bit := channelFlowBit(edge.Type)
+		if bit == 0 {
 			continue
 		}
-		key := channelFlowKey{from: edge.From, to: edge.To}
-		if observed[key] == nil {
-			observed[key] = make(map[EdgeType]bool)
-		}
-		observed[key][edge.Type] = true
+		observed[channelFlowKey{from: edge.From, to: edge.To}] |= bit
 	}
 
 	for _, flow := range result.channelArgFlows {
 		for _, edgeType := range []EdgeType{EdgeTypeSendsTo, EdgeTypeReceivesFrom} {
-			if !observed[channelFlowKey{from: flow.CalleeID, to: flow.ParamChannelID}][edgeType] {
+			if observed[channelFlowKey{from: flow.CalleeID, to: flow.ParamChannelID}]&channelFlowBit(edgeType) == 0 {
 				continue
 			}
 			key := edgeIdentityKey{from: flow.CalleeID, to: flow.ArgChannelID, edgeType: edgeType}
@@ -537,6 +534,24 @@ func (p *Parser) resolveChannelArgumentFlowEdges(result *ParseResult) {
 type channelFlowKey struct {
 	from string
 	to   string
+}
+
+type channelFlowMask uint8
+
+const (
+	channelFlowSend channelFlowMask = 1 << iota
+	channelFlowReceive
+)
+
+func channelFlowBit(edgeType EdgeType) channelFlowMask {
+	switch edgeType {
+	case EdgeTypeSendsTo:
+		return channelFlowSend
+	case EdgeTypeReceivesFrom:
+		return channelFlowReceive
+	default:
+		return 0
+	}
 }
 
 type edgeIdentityKey struct {
@@ -873,18 +888,30 @@ func (p *Parser) ensureBoundaryNode(id, name, pkgPath string, created map[string
 }
 
 func appendNode(mu *sync.Mutex, result *ParseResult, node *Node) {
+	if mu == nil {
+		result.Nodes = append(result.Nodes, node)
+		return
+	}
 	mu.Lock()
 	result.Nodes = append(result.Nodes, node)
 	mu.Unlock()
 }
 
 func appendEdge(mu *sync.Mutex, result *ParseResult, edge *Edge) {
+	if mu == nil {
+		result.Edges = append(result.Edges, edge)
+		return
+	}
 	mu.Lock()
 	result.Edges = append(result.Edges, edge)
 	mu.Unlock()
 }
 
 func appendChannelArgFlow(mu *sync.Mutex, result *ParseResult, flow channelArgFlow) {
+	if mu == nil {
+		result.channelArgFlows = append(result.channelArgFlows, flow)
+		return
+	}
 	mu.Lock()
 	result.channelArgFlows = append(result.channelArgFlows, flow)
 	mu.Unlock()

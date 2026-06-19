@@ -80,7 +80,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 	tools := []map[string]interface{}{
 		{
 			"name":        "get_dependencies",
-			"description": "Returns all nodes that the given node calls or imports, formatted as a Markdown list",
+			"description": "Returns nodes reached by dependency edges (CALLS, IMPORTS, REFERENCES, INSTANTIATES), formatted as a Markdown list",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -192,6 +192,8 @@ EDGE TYPES (use in patterns as :TYPE):
   CALLS          – function/method calls another function/method
   CONTAINS       – package contains file, file contains func/struct
   IMPORTS        – file imports a package
+  REFERENCES     – symbol references a package-scope symbol or type
+  INSTANTIATES   – function or variable creates a composite literal of a type
   IMPLEMENTS     – struct implements an interface
   SPAWNS         – function spawns a goroutine
   SENDS_TO       – function sends to a channel

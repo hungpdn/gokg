@@ -53,6 +53,8 @@ Use edge types after `:` inside square brackets: `[alias:TYPE]`.
 | `CALLS` | `(a)-[:CALLS]->(b)` | Function or method `a` calls `b` |
 | `CONTAINS` | `(a)-[:CONTAINS]->(b)` | Package/file/folder contains another node |
 | `IMPORTS` | `(a)-[:IMPORTS]->(b)` | File `a` imports package `b` |
+| `REFERENCES` | `(a)-[:REFERENCES]->(b)` | Symbol `a` references package-scope symbol or type `b` |
+| `INSTANTIATES` | `(a)-[:INSTANTIATES]->(b)` | Function or variable `a` creates a composite literal of type `b` |
 | `IMPLEMENTS` | `(a)-[:IMPLEMENTS]->(b)` | Struct `a` implements interface `b` |
 | `SPAWNS` | `(a)-[:SPAWNS]->(b)` | Function `a` spawns goroutine `b` |
 | `SENDS_TO` | `(a)-[:SENDS_TO]->(b)` | Function `a` sends to channel `b` |

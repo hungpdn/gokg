@@ -168,3 +168,52 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 		t.Fatalf("timeout waiting for fsnotify event to trigger runUpdate")
 	}
 }
+
+func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	mainPath := filepath.Join(dir, "main.go")
+
+	g := graph.NewGraph(nil)
+	requireNoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "testmodule", Type: parser.NodeTypePackage, Name: "main", PkgPath: "testmodule"},
+			{ID: mainPath, Type: parser.NodeTypeFile, Name: "main.go", PkgPath: "testmodule", FilePath: mainPath},
+			{ID: "testmodule.main", Type: parser.NodeTypeFunc, Name: "main", PkgPath: "testmodule", FilePath: mainPath},
+		},
+		Edges: []*parser.Edge{
+			{From: "testmodule", To: mainPath, Type: parser.EdgeTypeContains},
+			{From: mainPath, To: "testmodule.main", Type: parser.EdgeTypeContains},
+		},
+	}))
+
+	requireNoError(t, os.Remove(mainPath))
+
+	p := parser.NewParser("testmodule", "testmodule")
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer w.watcher.Close()
+
+	called := false
+	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		called = true
+		return update(updateCtx)
+	})
+
+	w.updatePackage(ctx, dir)
+
+	if !called {
+		t.Fatalf("expected update runner to remove stale package snapshot")
+	}
+	_, err = g.Query().GetDependencies("testmodule.main")
+	if err == nil {
+		t.Fatalf("expected removed package node to be missing")
+	}
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}

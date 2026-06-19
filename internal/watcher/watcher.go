@@ -147,10 +147,18 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 
 	log.Printf("Detected change in %s, updating graph incrementally...", dir)
 
+	knownPackagePaths := w.g.PackagePathsForDir(dir)
+	if handled := w.removePackagesIfNoGoFiles(ctx, dir, knownPackagePaths, runUpdate); handled {
+		return
+	}
+
 	// Determine the Go package path for this directory
 	cfg := &packages.Config{Mode: packages.NeedName, Context: ctx, Dir: dir}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil || len(pkgs) == 0 {
+		if handled := w.removePackagesIfNoGoFiles(ctx, dir, knownPackagePaths, runUpdate); handled {
+			return
+		}
 		log.Printf("Could not determine package for dir %s: %v", dir, err)
 		return
 	}
@@ -161,6 +169,9 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 	// mode to avoid pulling in all transitive dependencies on every file save.
 	res, err := w.p.ParsePackageIncremental(ctx, dir)
 	if err != nil {
+		if handled := w.removePackagesIfNoGoFiles(ctx, dir, knownPackagePaths, runUpdate); handled {
+			return
+		}
 		log.Printf("Error reparsing package %s: %v", pkgPath, err)
 		return
 	}
@@ -182,4 +193,60 @@ func (w *Watcher) updatePackage(ctx context.Context, dir string) {
 
 	// Aggressively release memory back to the OS after a heavy package parse
 	debug.FreeOSMemory()
+}
+
+func (w *Watcher) removePackagesIfNoGoFiles(
+	ctx context.Context,
+	dir string,
+	pkgPaths []string,
+	runUpdate func(context.Context, func(context.Context) error) error,
+) bool {
+	if len(pkgPaths) == 0 {
+		return false
+	}
+
+	hasGoFiles, err := dirHasGoFiles(dir, w.p.IncludeTests)
+	if err != nil {
+		log.Printf("Could not inspect dir %s for deleted package cleanup: %v", dir, err)
+		return true
+	}
+	if hasGoFiles {
+		return false
+	}
+
+	if err := runUpdate(ctx, func(ctx context.Context) error {
+		for _, pkgPath := range pkgPaths {
+			if err := w.g.RemovePackage(ctx, pkgPath); err != nil {
+				return fmt.Errorf("remove deleted package %s: %w", pkgPath, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Error removing deleted package snapshot for %s: %v", dir, err)
+		return true
+	}
+
+	log.Printf("Removed graph snapshot for deleted package directory: %s", dir)
+	debug.FreeOSMemory()
+	return true
+}
+
+func dirHasGoFiles(dir string, includeTests bool) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".go") && (includeTests || !strings.HasSuffix(name, "_test.go")) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

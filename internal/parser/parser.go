@@ -92,7 +92,6 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 				Nodes: make([]*Node, 0, len(pkg.Syntax)*8+1),
 				Edges: make([]*Edge, 0, len(pkg.Syntax)*16),
 			}
-			var localMu sync.Mutex
 			pkgPath := packageGraphPath(pkg)
 			isInternal := isInternalPackage(pkgPath, p.ModulePrefix)
 
@@ -116,7 +115,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 			local.Nodes = append(local.Nodes, node)
 
 			// Extract entities within the package
-			if err := p.extractPackageEntities(gCtx, pkg, &localMu, local); err != nil {
+			if err := p.extractPackageEntities(gCtx, pkg, nil, local); err != nil {
 				return err
 			}
 
@@ -366,8 +365,6 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 		Edges: make([]*Edge, 0, len(pkgs)*16),
 	}
 
-	var mu sync.Mutex // For extractPackageEntities
-
 	for _, pkg := range pkgs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -391,7 +388,7 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 		node.Type = NodeTypePackage
 		result.Nodes = append(result.Nodes, node)
 
-		if err := p.extractPackageEntities(ctx, pkg, &mu, result); err != nil {
+		if err := p.extractPackageEntities(ctx, pkg, nil, result); err != nil {
 			return nil, err
 		}
 	}
@@ -435,8 +432,6 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 		Edges: make([]*Edge, 0, len(pkgs)*16),
 	}
 
-	var mu sync.Mutex
-
 	for _, pkg := range pkgs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -461,7 +456,7 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 		result.Nodes = append(result.Nodes, node)
 
 		if pkg.TypesInfo != nil {
-			if err := p.extractPackageEntities(ctx, pkg, &mu, result); err != nil {
+			if err := p.extractPackageEntities(ctx, pkg, nil, result); err != nil {
 				return nil, err
 			}
 		}
