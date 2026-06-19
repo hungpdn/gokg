@@ -27,6 +27,8 @@ type concurrencySeenKey struct {
 	edgeType  parser.EdgeType
 }
 
+const maxSearchResults = 50
+
 // Query returns a new QueryBuilder for the graph.
 func (g *Graph) Query() *QueryBuilder {
 	return &QueryBuilder{g: g}
@@ -42,13 +44,8 @@ func (qb *QueryBuilder) GetDependencies(nodeID string) ([]*parser.Node, error) {
 		return nil, fmt.Errorf("node not found: %s", nodeID)
 	}
 
-	var deps []*parser.Node
-	seen := make(map[int64]bool)
+	deps := make([]*parser.Node, 0, len(qb.g.edges[id]))
 	for toID := range qb.g.edges[id] {
-		if seen[toID] {
-			continue
-		}
-		seen[toID] = true
 		if pNode, ok := qb.g.nodes[toID]; ok {
 			deps = append(deps, pNode)
 		}
@@ -67,12 +64,10 @@ func (qb *QueryBuilder) GetBlastRadius(nodeID string) ([]*parser.Node, error) {
 	}
 
 	var blast []*parser.Node
-	seen := make(map[int64]bool)
 	for fromID, outEdges := range qb.g.edges {
-		if _, ok := outEdges[id]; !ok || seen[fromID] {
+		if _, ok := outEdges[id]; !ok {
 			continue
 		}
-		seen[fromID] = true
 		if pNode, ok := qb.g.nodes[fromID]; ok {
 			blast = append(blast, pNode)
 		}
@@ -87,13 +82,13 @@ func (qb *QueryBuilder) GetConcurrencyFlow(nodeID string) ([]*parser.Node, error
 		return nil, err
 	}
 
-	seen := make(map[string]bool)
+	seen := make(map[*parser.Node]bool)
 	flows := make([]*parser.Node, 0, len(connections))
 	for _, conn := range connections {
-		if conn.Node == nil || seen[conn.Node.ID] {
+		if conn.Node == nil || seen[conn.Node] {
 			continue
 		}
-		seen[conn.Node.ID] = true
+		seen[conn.Node] = true
 		flows = append(flows, conn.Node)
 	}
 
@@ -426,17 +421,73 @@ func (qb *QueryBuilder) SearchNodes(query string) ([]*parser.Node, error) {
 	qb.g.mu.RLock()
 	defer qb.g.mu.RUnlock()
 
-	query = strings.ToLower(query)
-	var results []*parser.Node
+	lowerQuery := strings.ToLower(query)
+	asciiQuery := isASCIIString(lowerQuery)
+	results := make([]*parser.Node, 0, maxSearchResults)
 
 	for _, pNode := range qb.g.nodes {
-		if strings.Contains(strings.ToLower(pNode.Name), query) || strings.Contains(strings.ToLower(pNode.ID), query) {
+		if containsCaseInsensitive(pNode.Name, lowerQuery, asciiQuery) || containsCaseInsensitive(pNode.ID, lowerQuery, asciiQuery) {
 			results = append(results, pNode)
-			if len(results) >= 50 {
+			if len(results) >= maxSearchResults {
 				break
 			}
 		}
 	}
 
 	return results, nil
+}
+
+func containsCaseInsensitive(s string, lowerQuery string, asciiQuery bool) bool {
+	if lowerQuery == "" {
+		return true
+	}
+	if asciiQuery {
+		return containsASCIIFold(s, lowerQuery)
+	}
+	return strings.Contains(strings.ToLower(s), lowerQuery)
+}
+
+func containsASCIIFold(s string, lowerQuery string) bool {
+	queryLen := len(lowerQuery)
+	if queryLen == 0 {
+		return true
+	}
+	if queryLen > len(s) {
+		return false
+	}
+
+	first := lowerQuery[0]
+	for i := 0; i <= len(s)-queryLen; i++ {
+		if asciiLower(s[i]) != first {
+			continue
+		}
+
+		matched := true
+		for j := 1; j < queryLen; j++ {
+			if asciiLower(s[i+j]) != lowerQuery[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func asciiLower(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
+}
+
+func isASCIIString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

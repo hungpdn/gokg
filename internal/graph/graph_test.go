@@ -234,6 +234,25 @@ func TestConcurrencyGraphIncludesCalledFunctionChannelFlow(t *testing.T) {
 	assert.True(t, hasConcurrencyConnection(connections, "main.ch", parser.EdgeTypeReceivesFrom, "via_call"))
 }
 
+func TestSearchNodesCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	_, err := g.AddNode(ctx, &parser.Node{ID: "github.com/acme/service.ParseHTTP", Type: parser.NodeTypeFunc, Name: "ParseHTTP"})
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, &parser.Node{ID: "github.com/acme/service.Render", Type: parser.NodeTypeFunc, Name: "Render"})
+	require.NoError(t, err)
+
+	results, err := g.Query().SearchNodes("parsehttp")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "ParseHTTP", results[0].Name)
+
+	results, err = g.Query().SearchNodes("ACME/SERVICE")
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
+
 func TestFindPathTreatsRemovedNodesAsMissing(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

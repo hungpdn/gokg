@@ -31,18 +31,18 @@ func (g *Graph) Stats() Stats {
 	defer g.mu.RUnlock()
 
 	stats := Stats{
-		NodesByKind: make(map[string]int),
-		EdgesByKind: make(map[string]int),
-		NodesByRepo: make(map[string]int),
-		EdgesByRepo: make(map[string]int),
+		NodesByKind: make(map[string]int, 16),
+		EdgesByKind: make(map[string]int, 9),
+		NodesByRepo: make(map[string]int, 4),
+		EdgesByRepo: make(map[string]int, 4),
 		RAMEstimateBytes: int64(unsafe.Sizeof(*g)) +
 			int64(len(g.nodeMap))*64 +
 			int64(len(g.nodes))*32 +
 			int64(len(g.edges))*32,
 	}
 
-	sourceFiles := make(map[string]struct{})
-	nodesByPackage := make(map[string]int)
+	sourceFiles := make(map[string]struct{}, len(g.nodes))
+	nodesByPackage := make(map[string]int, len(g.nodes))
 
 	for _, node := range g.nodes {
 		if node == nil {
