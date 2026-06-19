@@ -41,8 +41,9 @@ func (g *Graph) Stats() Stats {
 			int64(len(g.edges))*32,
 	}
 
-	sourceFiles := make(map[string]struct{}, len(g.nodes))
-	nodesByPackage := make(map[string]int, len(g.nodes))
+	distinctEstimate := distinctStatsCapacity(len(g.nodes))
+	sourceFiles := make(map[string]struct{}, distinctEstimate)
+	nodesByPackage := make(map[string]int, distinctEstimate)
 
 	for _, node := range g.nodes {
 		if node == nil {
@@ -97,6 +98,17 @@ func (g *Graph) Stats() Stats {
 	}
 
 	return stats
+}
+
+func distinctStatsCapacity(nodes int) int {
+	if nodes <= 0 {
+		return 0
+	}
+	estimate := nodes / 8
+	if estimate < 16 {
+		return 16
+	}
+	return estimate
 }
 
 func estimateNodeBytes(node *parser.Node) int64 {

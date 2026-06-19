@@ -71,12 +71,9 @@ func runStats(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	if jsonOutput {
-		data, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(out, string(data))
-		return err
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
 	}
 
 	return printStatsReport(out, report)

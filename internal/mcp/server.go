@@ -336,7 +336,10 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 		if err != nil {
 			return s.errorResult(req.ID, err)
 		}
-		data, _ := json.MarshalIndent(rows, "", "  ")
+		data, err := json.MarshalIndent(rows, "", "  ")
+		if err != nil {
+			return s.errorResult(req.ID, fmt.Errorf("cypher result marshal error: %w", err))
+		}
 		return s.textResult(req.ID, formatCypherMarkdown(params.Arguments.Query, string(data)))
 
 	default:

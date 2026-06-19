@@ -67,13 +67,9 @@ var queryCmd = &cobra.Command{
 
 		fmt.Printf("Query completed in %v. Found %d row(s).\n\n", time.Since(start), len(results))
 
-		data, err := json.MarshalIndent(results, "", "  ")
-		if err != nil {
-			return err
-		}
-
-		fmt.Println(string(data))
-		return nil
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(results)
 	},
 }
 
