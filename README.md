@@ -173,75 +173,53 @@ Full reference: [docs/cypher-reference.md](docs/cypher-reference.md)
 
 ## Integrating with AI Agents
 
-Because GoKG exposes an MCP server over standard input/output (`stdio`) and optional HTTP, you can connect it to AI clients like Claude Desktop, Cursor, or VSCode extensions (Cline, Roo Code).
+Because GoKG exposes an MCP server over standard stdio and HTTP, you can connect it to AI clients.
 
-### Claude Desktop
-Add this to your `claude_desktop_config.json`:
+For `stdio`
 ```json
+// for each repo
 {
   "mcpServers": {
     "gokg": {
       "command": "gokg",
-      "args": ["mcp", "--watch"],
-      "cwd": "/path/to/your/go/project"
+      "args": ["mcp"]
+    }
+  }
+}
+
+// for workspace
+{
+  "mcpServers": {
+    "gokg": {
+      "command": "gokg",
+      "args": ["mcp", "--workspace", "<your-workspace>"]
     }
   }
 }
 ```
 
-### Cursor IDE
-1. Open Settings -> Features -> MCP
-2. Click **Add Server**
-3. Set Name to `GoKG`, Type to `stdio`, and Command to `gokg mcp --watch`
-
-For HTTP-capable clients, start GoKG separately:
-```bash
-gokg mcp --http --addr 127.0.0.1:8080 --watch
-```
-
-Then configure the client URL as:
-```text
-http://127.0.0.1:8080/mcp
-```
-
-### VSCode (Cline / Roo Code)
-Add this to the agent's `mcp_config.json`:
+For `HTTP`
 ```json
+// for each repo
 {
   "mcpServers": {
     "gokg": {
       "command": "gokg",
-      "args": ["mcp", "--watch"]
+      "args": ["mcp", "--http", "--addr", "127.0.0.1:8080"]
+    }
+  }
+}
+
+// for workspace
+{
+  "mcpServers": {
+    "gokg": {
+      "command": "gokg",
+      "args": ["mcp", "--workspace", "<your-workspace>", "--http", "--addr", "127.0.0.1:8080"]
     }
   }
 }
 ```
-
----
-
-## How AI Agents Use GoKG
-
-A typical workflow:
-
-```text
-1. User: "The payment service crashes when calling ProcessOrder"
-
-2. Agent calls search_nodes("ProcessOrder")
-   Gets candidate fully-qualified node IDs.
-
-3. Agent calls execute_cypher(
-   "MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = \"ProcessOrder\" RETURN b.Name, b.Type LIMIT 30"
-   )
-   Sees exactly what ProcessOrder calls.
-
-4. Agent calls get_blast_radius("...ProcessOrder...")
-   Understands what else breaks if ProcessOrder changes.
-
-5. Agent calls get_source_code("...ProcessOrder...")
-   Reads the implementation before editing.
-```
-
-The key is that `execute_cypher` exposes the graph schema in the MCP tool description, and invalid queries fail loudly with alias/property/type errors. That gives the LLM a tight feedback loop: build a query, inspect the error or results, refine, then combine with source-code tools.
 
 ---
 
