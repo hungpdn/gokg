@@ -20,11 +20,12 @@ var workspaceInitCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		out := cmd.OutOrStdout()
 		ws, err := workspace.Init(name)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Workspace %q created at %s\n", name, ws.Dir)
+		fmt.Fprintf(out, "Workspace %q created at %s\n", name, ws.Dir)
 		return nil
 	},
 }
@@ -35,6 +36,7 @@ var workspaceAddCmd = &cobra.Command{
 	Long:  `Add a Go repository directory to the workspace. If no path is given, the current directory is used.`,
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		out := cmd.OutOrStdout()
 		wsName, _ := cmd.Flags().GetString("workspace")
 		if wsName == "" {
 			return fmt.Errorf("--workspace is required")
@@ -70,7 +72,7 @@ var workspaceAddCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Added repo %q (%s) to workspace %q\n", repoID, analysisRoot.Dir, wsName)
+		fmt.Fprintf(out, "Added repo %q (%s) to workspace %q\n", repoID, analysisRoot.Dir, wsName)
 		return nil
 	},
 }
@@ -79,22 +81,23 @@ var workspaceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all workspaces",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		out := cmd.OutOrStdout()
 		names, err := workspace.List()
 		if err != nil {
 			return err
 		}
 		if len(names) == 0 {
-			fmt.Println("No workspaces found.")
+			fmt.Fprintln(out, "No workspaces found.")
 			return nil
 		}
-		fmt.Println("Workspaces:")
+		fmt.Fprintln(out, "Workspaces:")
 		for _, name := range names {
 			ws, err := workspace.Load(name)
 			if err != nil {
-				fmt.Printf("  - %s (error: %v)\n", name, err)
+				fmt.Fprintf(out, "  - %s (error: %v)\n", name, err)
 				continue
 			}
-			fmt.Printf("  - %s (%d repos)\n", name, len(ws.Config.Repos))
+			fmt.Fprintf(out, "  - %s (%d repos)\n", name, len(ws.Config.Repos))
 		}
 		return nil
 	},
@@ -106,16 +109,17 @@ var workspaceShowCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		out := cmd.OutOrStdout()
 		ws, err := workspace.Load(name)
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("Workspace: %s\n", ws.Name)
-		fmt.Printf("Directory: %s\n", ws.Dir)
-		fmt.Printf("Repos (%d):\n", len(ws.Config.Repos))
-		for repoID, path := range ws.Config.Repos {
-			fmt.Printf("  - %s → %s\n", repoID, path)
+		fmt.Fprintf(out, "Workspace: %s\n", ws.Name)
+		fmt.Fprintf(out, "Directory: %s\n", ws.Dir)
+		fmt.Fprintf(out, "Repos (%d):\n", len(ws.Config.Repos))
+		for _, repo := range sortedWorkspaceRepos(ws) {
+			fmt.Fprintf(out, "  - %s -> %s\n", repo.ID, repo.Path)
 		}
 		return nil
 	},
@@ -128,6 +132,7 @@ var workspaceRemoveCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		wsName := args[0]
 		repoID := args[1]
+		out := cmd.OutOrStdout()
 
 		ws, err := workspace.Load(wsName)
 		if err != nil {
@@ -138,7 +143,7 @@ var workspaceRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Removed repo %q from workspace %q\n", repoID, wsName)
+		fmt.Fprintf(out, "Removed repo %q from workspace %q\n", repoID, wsName)
 		return nil
 	},
 }

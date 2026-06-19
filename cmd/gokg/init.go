@@ -12,7 +12,8 @@ var initCmd = &cobra.Command{
 	Short: "Initialize gokg in the current directory",
 	Long:  `Initialize the local gokg database (.gokg/) and prepare the workspace for analysis.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Initializing gokg workspace...")
+		out := cmd.OutOrStdout()
+		fmt.Fprintln(out, "Initializing gokg workspace...")
 
 		store, err := storage.NewBadgerStorage(defaultDBPath)
 		if err != nil {
@@ -20,7 +21,7 @@ var initCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		fmt.Printf("gokg initialized successfully in %s\n", defaultDBPath)
+		fmt.Fprintf(out, "gokg initialized successfully in %s\n", defaultDBPath)
 		return nil
 	},
 }

@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hungpdn/gokg/internal/graph"
@@ -226,4 +228,33 @@ func TestHandleCallUnknownTool(t *testing.T) {
 	require.NotNil(t, res)
 	assert.NotNil(t, res.Error)
 	assert.Contains(t, res.Error.Message, "Unknown tool")
+}
+
+func TestServeAcceptsLargeStdioMessages(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+
+	params, err := json.Marshal(map[string]interface{}{
+		"name": "search_nodes",
+		"arguments": map[string]string{
+			"query": strings.Repeat("a", 70*1024),
+		},
+	})
+	require.NoError(t, err)
+	req, err := json.Marshal(Request{
+		JSONRPC: "2.0",
+		ID:      9,
+		Method:  "tools/call",
+		Params:  params,
+	})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	err = server.Serve(context.Background(), bytes.NewReader(append(req, '\n')), &out)
+	require.NoError(t, err)
+
+	var res Response
+	require.NoError(t, json.Unmarshal(out.Bytes(), &res))
+	assert.Nil(t, res.Error)
+	assert.EqualValues(t, 9, res.ID)
 }

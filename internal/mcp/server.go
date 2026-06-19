@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -16,6 +17,8 @@ import (
 type Server struct {
 	graph *graph.Graph
 }
+
+const maxStdioMessageBytes = 4 << 20
 
 func NewServer(g *graph.Graph) *Server {
 	return &Server{graph: g}
@@ -41,19 +44,32 @@ type Error struct {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	scanner := bufio.NewScanner(os.Stdin)
+	return s.Serve(ctx, os.Stdin, os.Stdout)
+}
+
+func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	scanner := bufio.NewScanner(in)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageBytes)
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		line := scanner.Bytes()
 
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
-			s.sendError(nil, -32700, "Parse error")
+			if err := writeError(out, nil, -32700, "Parse error"); err != nil {
+				return err
+			}
 			continue
 		}
 
 		res := s.handleRequest(&req)
 		if res != nil {
-			s.sendResponse(res)
+			if err := writeResponse(out, res); err != nil {
+				return err
+			}
 		}
 	}
 	return scanner.Err()
@@ -338,11 +354,11 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 		if err != nil {
 			return s.errorResult(req.ID, err)
 		}
-		data, err := json.MarshalIndent(rows, "", "  ")
+		data, err := encodeIndentedJSON(rows)
 		if err != nil {
 			return s.errorResult(req.ID, fmt.Errorf("cypher result marshal error: %w", err))
 		}
-		return s.textResult(req.ID, formatCypherMarkdown(params.Arguments.Query, string(data)))
+		return s.textResult(req.ID, formatCypherMarkdown(params.Arguments.Query, data))
 
 	default:
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
@@ -445,6 +461,16 @@ func formatCypherMarkdown(query, jsonData string) string {
 	return b.String()
 }
 
+func encodeIndentedJSON(value interface{}) (string, error) {
+	var b strings.Builder
+	encoder := json.NewEncoder(&b)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
 // --- Response helpers ---
 
 func (s *Server) textResult(id interface{}, text string) *Response {
@@ -460,15 +486,26 @@ func (s *Server) errorResult(id interface{}, err error) *Response {
 }
 
 func (s *Server) sendResponse(res *Response) {
-	data, _ := json.Marshal(res)
-	fmt.Printf("%s\n", data)
+	_ = writeResponse(os.Stdout, res)
 }
 
 func (s *Server) sendError(id interface{}, code int, message string) {
-	res := &Response{
+	_ = writeError(os.Stdout, id, code, message)
+}
+
+func writeError(out io.Writer, id interface{}, code int, message string) error {
+	return writeResponse(out, &Response{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &Error{Code: code, Message: message},
+	})
+}
+
+func writeResponse(out io.Writer, res *Response) error {
+	data, err := json.Marshal(res)
+	if err != nil {
+		return err
 	}
-	s.sendResponse(res)
+	_, err = fmt.Fprintf(out, "%s\n", data)
+	return err
 }
