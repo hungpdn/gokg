@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -66,8 +67,8 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 	pkgs = selectGraphPackages(pkgs)
 
 	result := &ParseResult{
-		Nodes: make([]*Node, 0),
-		Edges: make([]*Edge, 0),
+		Nodes: make([]*Node, 0, len(pkgs)*8),
+		Edges: make([]*Edge, 0, len(pkgs)*16),
 	}
 
 	p.addWorkspaceHierarchy(result)
@@ -78,6 +79,7 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 
 	var mu sync.Mutex // To protect result slice appends if done concurrently
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxPackageWorkers(len(pkgs)))
 
 	for _, pkg := range pkgs {
 		pkg := pkg // Capture loop variable
@@ -86,6 +88,11 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 				return err
 			}
 
+			local := &ParseResult{
+				Nodes: make([]*Node, 0, len(pkg.Syntax)*8+1),
+				Edges: make([]*Edge, 0, len(pkg.Syntax)*16),
+			}
+			var localMu sync.Mutex
 			pkgPath := packageGraphPath(pkg)
 			isInternal := isInternalPackage(pkgPath, p.ModulePrefix)
 
@@ -106,14 +113,18 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 
 			node.Type = NodeTypePackage
 
-			mu.Lock()
-			result.Nodes = append(result.Nodes, node)
-			mu.Unlock()
+			local.Nodes = append(local.Nodes, node)
 
 			// Extract entities within the package
-			if err := p.extractPackageEntities(gCtx, pkg, &mu, result); err != nil {
+			if err := p.extractPackageEntities(gCtx, pkg, &localMu, local); err != nil {
 				return err
 			}
+
+			mu.Lock()
+			result.Nodes = append(result.Nodes, local.Nodes...)
+			result.Edges = append(result.Edges, local.Edges...)
+			result.channelArgFlows = append(result.channelArgFlows, local.channelArgFlows...)
+			mu.Unlock()
 
 			return nil
 		})
@@ -251,6 +262,20 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 	return packageFolders
 }
 
+func maxPackageWorkers(pkgCount int) int {
+	if pkgCount <= 1 {
+		return 1
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		return 1
+	}
+	if workers > pkgCount {
+		return pkgCount
+	}
+	return workers
+}
+
 func shouldSkipFolder(name string) bool {
 	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
 }
@@ -338,8 +363,8 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 	pkgs = selectGraphPackages(pkgs)
 
 	result := &ParseResult{
-		Nodes: make([]*Node, 0),
-		Edges: make([]*Edge, 0),
+		Nodes: make([]*Node, 0, len(pkgs)*8),
+		Edges: make([]*Edge, 0, len(pkgs)*16),
 	}
 
 	var mu sync.Mutex // For extractPackageEntities
@@ -407,8 +432,8 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 	}
 
 	result := &ParseResult{
-		Nodes: make([]*Node, 0),
-		Edges: make([]*Edge, 0),
+		Nodes: make([]*Node, 0, len(pkgs)*8),
+		Edges: make([]*Edge, 0, len(pkgs)*16),
 	}
 
 	var mu sync.Mutex
@@ -472,6 +497,9 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 		visited[pkgPath] = true
 
 		isWorkspacePkg := isInternalPackage(pkgPath, p.ModulePrefix)
+		if !isWorkspacePkg {
+			return
+		}
 		scope := pkg.Types.Scope()
 		for _, name := range scope.Names() {
 			obj := scope.Lookup(name)
@@ -489,9 +517,12 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 					}
 					id := BuildID(pkgPath, ".", obj.Name())
 
-					if iType, ok := named.Underlying().(*types.Interface); ok && isWorkspacePkg {
+					if iType, ok := named.Underlying().(*types.Interface); ok {
+						if iType.Empty() {
+							continue
+						}
 						ifaces = append(ifaces, ifaceInfo{id: id, t: iType})
-					} else if isWorkspacePkg {
+					} else {
 						structs = append(structs, structInfo{id: id, t: named})
 						structs = append(structs, structInfo{id: id, t: types.NewPointer(named)})
 					}
@@ -510,9 +541,6 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 
 	for _, s := range structs {
 		for _, i := range ifaces {
-			if i.t.Empty() {
-				continue
-			}
 			if types.Implements(s.t, i.t) {
 				edge := NewEdge()
 				edge.From = s.id

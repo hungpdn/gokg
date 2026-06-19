@@ -82,6 +82,36 @@ func TestBadgerStorageIterate(t *testing.T) {
 	assert.Equal(t, 3, count)
 }
 
+func TestBadgerStorageIteratePrefix(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewBadgerStorage(dir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	require.NoError(t, store.Put(ctx, []byte("node:1"), []byte("data1")))
+	require.NoError(t, store.Put(ctx, []byte("node:2"), []byte("data2")))
+	require.NoError(t, store.Put(ctx, []byte("edge:1"), []byte("data3")))
+
+	var keys []string
+	prefixStore := store.(PrefixIterator)
+	err = prefixStore.IteratePrefix(ctx, []byte("node:"), func(key []byte, value []byte) error {
+		keys = append(keys, string(key))
+		return nil
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"node:1", "node:2"}, keys)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	err = prefixStore.IteratePrefix(canceled, []byte("node:"), func(key []byte, value []byte) error {
+		return nil
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 func TestBadgerStorageReadOnly(t *testing.T) {
 	dir := t.TempDir()
 

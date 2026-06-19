@@ -192,6 +192,26 @@ func TestConcurrencyGraphIncludesCalledFunctionChannelFlow(t *testing.T) {
 	assert.True(t, hasConcurrencyConnection(connections, "main.ch", parser.EdgeTypeReceivesFrom, "via_call"))
 }
 
+func TestFindPathTreatsRemovedNodesAsMissing(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	require.NoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "pkgA.FuncA", Type: parser.NodeTypeFunc, Name: "FuncA", PkgPath: "pkgA"},
+			{ID: "pkgB.FuncB", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkgB"},
+		},
+		Edges: []*parser.Edge{
+			{From: "pkgA.FuncA", To: "pkgB.FuncB", Type: parser.EdgeTypeCalls},
+		},
+	}))
+	require.NoError(t, g.RemovePackage(ctx, "pkgB"))
+
+	_, err := g.Query().FindPath("pkgA.FuncA", "pkgB.FuncB")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "target node not found")
+}
+
 func TestBuildFromParseResultsMergesCrossRepoEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

@@ -113,6 +113,32 @@ func (b *badgerStorage) Iterate(ctx context.Context, fn func(key []byte, value [
 	})
 }
 
+func (b *badgerStorage) IteratePrefix(ctx context.Context, prefix []byte, fn func(key []byte, value []byte) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return b.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = prefix
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			item := it.Item()
+			k := item.Key()
+			err := item.Value(func(v []byte) error {
+				return fn(k, v)
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (b *badgerStorage) Delete(ctx context.Context, key []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err

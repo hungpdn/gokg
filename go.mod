@@ -10,7 +10,6 @@ require (
 	golang.org/x/mod v0.36.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/tools v0.45.0
-	gonum.org/v1/gonum v0.17.0
 )
 
 require (

@@ -20,6 +20,12 @@ type Storage interface {
 	Close() error
 }
 
+// PrefixIterator is implemented by storage backends that can efficiently scan
+// keys with a shared prefix.
+type PrefixIterator interface {
+	IteratePrefix(ctx context.Context, prefix []byte, fn func(key []byte, value []byte) error) error
+}
+
 // ValueLogGCer is implemented by storage backends that can compact stale value
 // log entries after heavy write/delete cycles.
 type ValueLogGCer interface {

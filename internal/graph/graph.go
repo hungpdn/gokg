@@ -1,25 +1,23 @@
 package graph
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"strconv"
 	"sync"
 
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
-
-	"gonum.org/v1/gonum/graph/simple"
 )
 
 var ErrUnknownEdgeEndpoint = errors.New("edge references unknown nodes")
 
 type Graph struct {
 	mu         sync.RWMutex
-	directed   *simple.DirectedGraph
 	nodeMap    map[string]int64
 	nodes      map[int64]*parser.Node
 	edges      map[int64]map[int64][]*parser.Edge
@@ -31,7 +29,6 @@ type Graph struct {
 // NewGraph creates a new Graph instance with an optional storage backend.
 func NewGraph(store storage.Storage) *Graph {
 	return &Graph{
-		directed:   simple.NewDirectedGraph(),
 		nodeMap:    make(map[string]int64),
 		nodes:      make(map[int64]*parser.Node),
 		edges:      make(map[int64]map[int64][]*parser.Edge),
@@ -76,9 +73,6 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 				return id, err
 			}
 			g.nodes[id] = pNode
-			gNode := simple.Node(id)
-			g.directed.AddNode(gNode)
-			g.restoreInboundEdges(id)
 		} else if shouldReplaceNode(g.nodes[id], pNode) {
 			if err := g.persistNode(ctx, pNode); err != nil {
 				return id, err
@@ -97,12 +91,6 @@ func (g *Graph) AddNode(ctx context.Context, pNode *parser.Node) (int64, error) 
 
 	g.nodeMap[pNode.ID] = id
 	g.nodes[id] = pNode
-
-	// Add to gonum graph
-	gNode := simple.Node(id)
-	g.directed.AddNode(gNode)
-
-	g.restoreInboundEdges(id)
 
 	return id, nil
 }
@@ -138,13 +126,6 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	}
 
 	g.edges[fromID][toID] = append(g.edges[fromID][toID], pEdge)
-
-	// Keep self-edges in the semantic graph/export, but do not add them to
-	// gonum's simple.DirectedGraph because it panics on self-loops.
-	if fromID != toID {
-		gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(toID)}
-		g.directed.SetEdge(gEdge)
-	}
 
 	return nil
 }
@@ -263,6 +244,22 @@ func (g *Graph) storageForEdge(pEdge *parser.Edge) storage.Storage {
 }
 
 func edgeStorageKey(edge *parser.Edge) []byte {
+	b := make([]byte, 0, len(edge.From)+len(edge.To)+len(edge.Type)+48)
+	b = append(b, "edge:v3:"...)
+	b = appendLengthPrefixedString(b, edge.From)
+	b = appendLengthPrefixedString(b, edge.To)
+	b = appendLengthPrefixedString(b, string(edge.Type))
+	return b
+}
+
+func appendLengthPrefixedString(dst []byte, s string) []byte {
+	dst = strconv.AppendInt(dst, int64(len(s)), 10)
+	dst = append(dst, ':')
+	dst = append(dst, s...)
+	return dst
+}
+
+func edgeStorageKeyV2(edge *parser.Edge) []byte {
 	parts := [3]string{edge.From, edge.To, string(edge.Type)}
 	data, err := json.Marshal(parts)
 	if err != nil {
@@ -277,7 +274,7 @@ func legacyEdgeStorageKey(edge *parser.Edge) []byte {
 }
 
 func edgeStorageDeleteKeys(edge *parser.Edge) [][]byte {
-	return [][]byte{edgeStorageKey(edge), legacyEdgeStorageKey(edge)}
+	return [][]byte{edgeStorageKey(edge), edgeStorageKeyV2(edge), legacyEdgeStorageKey(edge)}
 }
 
 func shouldReplaceNode(existing, candidate *parser.Node) bool {
@@ -319,15 +316,12 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 
 	// First pass: load all nodes
 	for _, store := range stores {
-		err := store.Iterate(ctx, func(key []byte, value []byte) error {
-			keyStr := string(key)
-			if strings.HasPrefix(keyStr, "node:") {
-				var pNode parser.Node
-				if err := json.Unmarshal(value, &pNode); err != nil {
-					return err
-				}
-				_, _ = g.AddNode(ctx, &pNode)
+		err := iterateStoragePrefix(ctx, store, []byte("node:"), func(key []byte, value []byte) error {
+			var pNode parser.Node
+			if err := json.Unmarshal(value, &pNode); err != nil {
+				return err
 			}
+			_, _ = g.AddNode(ctx, &pNode)
 			return nil
 		})
 
@@ -338,16 +332,13 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 
 	// Second pass: load all edges
 	for _, store := range stores {
-		err := store.Iterate(ctx, func(key []byte, value []byte) error {
-			keyStr := string(key)
-			if strings.HasPrefix(keyStr, "edge:") {
-				var pEdge parser.Edge
-				if err := json.Unmarshal(value, &pEdge); err != nil {
-					return err
-				}
-				if err := g.AddEdge(ctx, &pEdge); err != nil && !errors.Is(err, ErrUnknownEdgeEndpoint) {
-					return err
-				}
+		err := iterateStoragePrefix(ctx, store, []byte("edge:"), func(key []byte, value []byte) error {
+			var pEdge parser.Edge
+			if err := json.Unmarshal(value, &pEdge); err != nil {
+				return err
+			}
+			if err := g.AddEdge(ctx, &pEdge); err != nil && !errors.Is(err, ErrUnknownEdgeEndpoint) {
+				return err
 			}
 			return nil
 		})
@@ -358,6 +349,18 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 	}
 
 	return nil
+}
+
+func iterateStoragePrefix(ctx context.Context, store storage.Storage, prefix []byte, fn func(key []byte, value []byte) error) error {
+	if prefixStore, ok := store.(storage.PrefixIterator); ok {
+		return prefixStore.IteratePrefix(ctx, prefix, fn)
+	}
+	return store.Iterate(ctx, func(key []byte, value []byte) error {
+		if !bytes.HasPrefix(key, prefix) {
+			return nil
+		}
+		return fn(key, value)
+	})
 }
 
 // RemovePackage removes all nodes and edges belonging to the given package path.
@@ -396,29 +399,9 @@ func (g *Graph) RemovePackage(ctx context.Context, pkgPath string) error {
 	}
 
 	for _, id := range nodesToRemove {
-		g.directed.RemoveNode(id)
 		delete(g.nodes, id)
 		delete(g.edges, id)
 	}
 
 	return nil
-}
-
-// restoreInboundEdges restores all edges from other packages/nodes pointing to the given node.
-func (g *Graph) restoreInboundEdges(id int64) {
-	if g.nodes[id] == nil {
-		return
-	}
-	for fromID, outEdges := range g.edges {
-		if g.nodes[fromID] == nil {
-			continue
-		}
-		if fromID == id {
-			continue
-		}
-		if _, exists := outEdges[id]; exists {
-			gEdge := simple.Edge{F: simple.Node(fromID), T: simple.Node(id)}
-			g.directed.SetEdge(gEdge)
-		}
-	}
 }

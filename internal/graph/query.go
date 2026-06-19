@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/hungpdn/gokg/internal/parser"
-	"gonum.org/v1/gonum/graph/path"
-	"gonum.org/v1/gonum/graph/simple"
 )
 
 // QueryBuilder provides an interface to search the graph.
@@ -329,18 +327,21 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 	if !tgtExists {
 		return nil, fmt.Errorf("target node not found: %s", targetID)
 	}
+	if qb.g.nodes[srcNumID] == nil {
+		return nil, fmt.Errorf("source node not found: %s", sourceID)
+	}
+	if qb.g.nodes[tgtNumID] == nil {
+		return nil, fmt.Errorf("target node not found: %s", targetID)
+	}
 
-	// Use gonum's shortest path (BFS with uniform weight = shortest hop count)
-	shortest := path.DijkstraFrom(simple.Node(srcNumID), qb.g.directed)
-	pathNodes, _ := shortest.To(tgtNumID)
+	pathIDs := qb.shortestPathIDs(srcNumID, tgtNumID)
 
-	if len(pathNodes) == 0 {
+	if len(pathIDs) == 0 {
 		return nil, fmt.Errorf("no path found from %s to %s", sourceID, targetID)
 	}
 
-	var results []PathResult
-	for i, gNode := range pathNodes {
-		numID := gNode.ID()
+	results := make([]PathResult, 0, len(pathIDs))
+	for i, numID := range pathIDs {
 		pNode := qb.g.nodes[numID]
 		if pNode == nil {
 			continue
@@ -349,8 +350,8 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 		pr := PathResult{Node: pNode}
 
 		// Add the edge type connecting this node to the next
-		if i < len(pathNodes)-1 {
-			nextNumID := pathNodes[i+1].ID()
+		if i < len(pathIDs)-1 {
+			nextNumID := pathIDs[i+1]
 			if edgeMap, ok := qb.g.edges[numID]; ok {
 				if edges, ok := edgeMap[nextNumID]; ok && len(edges) > 0 {
 					pr.EdgeType = string(edges[0].Type)
@@ -362,6 +363,50 @@ func (qb *QueryBuilder) FindPath(sourceID, targetID string) ([]PathResult, error
 	}
 
 	return results, nil
+}
+
+func (qb *QueryBuilder) shortestPathIDs(sourceID, targetID int64) []int64 {
+	if sourceID == targetID {
+		return []int64{sourceID}
+	}
+
+	queue := []int64{sourceID}
+	seen := map[int64]bool{sourceID: true}
+	prev := make(map[int64]int64)
+
+	for head := 0; head < len(queue); head++ {
+		currentID := queue[head]
+		for nextID := range qb.g.edges[currentID] {
+			if seen[nextID] || qb.g.nodes[nextID] == nil {
+				continue
+			}
+			seen[nextID] = true
+			prev[nextID] = currentID
+			if nextID == targetID {
+				return reconstructPathIDs(sourceID, targetID, prev)
+			}
+			queue = append(queue, nextID)
+		}
+	}
+
+	return nil
+}
+
+func reconstructPathIDs(sourceID, targetID int64, prev map[int64]int64) []int64 {
+	reversed := []int64{targetID}
+	for currentID := targetID; currentID != sourceID; {
+		parentID, ok := prev[currentID]
+		if !ok {
+			return nil
+		}
+		reversed = append(reversed, parentID)
+		currentID = parentID
+	}
+
+	for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+		reversed[left], reversed[right] = reversed[right], reversed[left]
+	}
+	return reversed
 }
 
 // SearchNodes returns up to 50 nodes whose Name or ID contains the query string (case-insensitive).
