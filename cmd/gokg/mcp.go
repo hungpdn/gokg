@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/mcp"
@@ -13,6 +14,11 @@ import (
 	"github.com/hungpdn/gokg/internal/watcher"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
+)
+
+const (
+	watchStorageOpenTimeout = 5 * time.Second
+	watchStorageOpenDelay   = 250 * time.Millisecond
 )
 
 var mcpCmd = &cobra.Command{
@@ -68,7 +74,7 @@ var mcpCmd = &cobra.Command{
 					repoID := repo.ID
 					dbPath := ws.GetRepoDBPath(repoID)
 					w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
-						store, err := storage.NewBadgerStorage(dbPath)
+						store, err := openWatchStorage(ctx, dbPath)
 						if err != nil {
 							return fmt.Errorf("open watch storage for repo %q: %w", repoID, err)
 						}
@@ -125,7 +131,7 @@ var mcpCmd = &cobra.Command{
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
 			} else {
 				w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
-					store, err := storage.NewBadgerStorage(dbPath)
+					store, err := openWatchStorage(ctx, dbPath)
 					if err != nil {
 						return fmt.Errorf("open watch storage: %w", err)
 					}
@@ -182,4 +188,52 @@ func mcpHTTPURL(addr string, path string) string {
 		path = "/" + path
 	}
 	return "http://" + addr + path
+}
+
+type badgerStorageOpener func(string) (storage.Storage, error)
+
+func openWatchStorage(ctx context.Context, dbPath string) (storage.Storage, error) {
+	return openWatchStorageWithRetry(ctx, dbPath, storage.NewBadgerStorage, watchStorageOpenTimeout, watchStorageOpenDelay)
+}
+
+func openWatchStorageWithRetry(
+	ctx context.Context,
+	dbPath string,
+	open badgerStorageOpener,
+	timeout time.Duration,
+	delay time.Duration,
+) (storage.Storage, error) {
+	if delay <= 0 {
+		delay = watchStorageOpenDelay
+	}
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	for {
+		store, err := open(dbPath)
+		if err == nil {
+			return store, nil
+		}
+		if !isLikelyBadgerLockError(err) {
+			return nil, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, fmt.Errorf("%w; Badger database %q is still locked after %s. Stop other gokg processes using this DB or use --db to select a different database", err, dbPath, timeout)
+		case <-time.After(delay):
+		}
+	}
+}
+
+func isLikelyBadgerLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "cannot acquire directory lock") ||
+		strings.Contains(msg, "resource temporarily unavailable")
 }
