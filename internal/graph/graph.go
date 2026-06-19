@@ -16,6 +16,8 @@ import (
 
 var ErrUnknownEdgeEndpoint = errors.New("edge references unknown nodes")
 
+const maxPersistBatchEntries = 1024
+
 type Graph struct {
 	mu         sync.RWMutex
 	nodeMap    map[string]int64
@@ -131,19 +133,31 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 }
 
 func mergeEdgeOccurrences(existing, candidate *parser.Edge) bool {
-	if existing == nil || candidate == nil || len(candidate.Occurrences) == 0 {
-		return false
-	}
-
-	changed := false
-	for _, occurrence := range candidate.Occurrences {
-		if hasEdgeOccurrence(existing.Occurrences, occurrence) {
-			continue
-		}
-		existing.Occurrences = append(existing.Occurrences, occurrence)
-		changed = true
+	occurrences, changed := edgeOccurrencesAfterMerge(existing, candidate)
+	if changed {
+		existing.Occurrences = occurrences
 	}
 	return changed
+}
+
+func edgeOccurrencesAfterMerge(existing, candidate *parser.Edge) ([]parser.EdgeOccurrence, bool) {
+	if existing == nil || candidate == nil || len(candidate.Occurrences) == 0 {
+		return nil, false
+	}
+
+	occurrences := existing.Occurrences
+	changed := false
+	for _, occurrence := range candidate.Occurrences {
+		if hasEdgeOccurrence(occurrences, occurrence) {
+			continue
+		}
+		if !changed {
+			occurrences = append([]parser.EdgeOccurrence(nil), existing.Occurrences...)
+			changed = true
+		}
+		occurrences = append(occurrences, occurrence)
+	}
+	return occurrences, changed
 }
 
 func hasEdgeOccurrence(occurrences []parser.EdgeOccurrence, candidate parser.EdgeOccurrence) bool {
@@ -155,6 +169,17 @@ func hasEdgeOccurrence(occurrences []parser.EdgeOccurrence, candidate parser.Edg
 	return false
 }
 
+func cloneEdge(edge *parser.Edge) *parser.Edge {
+	if edge == nil {
+		return nil
+	}
+	cloned := *edge
+	if len(edge.Occurrences) > 0 {
+		cloned.Occurrences = append([]parser.EdgeOccurrence(nil), edge.Occurrences...)
+	}
+	return &cloned
+}
+
 // BuildFromParseResult builds the graph from the parse result
 func (g *Graph) BuildFromParseResult(ctx context.Context, result *parser.ParseResult) error {
 	return g.BuildFromParseResults(ctx, result)
@@ -162,36 +187,288 @@ func (g *Graph) BuildFromParseResult(ctx context.Context, result *parser.ParseRe
 
 // BuildFromParseResults merges one or more parse results into the graph.
 func (g *Graph) BuildFromParseResults(ctx context.Context, results ...*parser.ParseResult) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	nodeStages, nextNodeID, err := g.stageNodes(ctx, results...)
+	if err != nil {
+		return err
+	}
+	if err := g.persistStagedNodes(ctx, nodeStages); err != nil {
+		return err
+	}
+	g.applyStagedNodes(nodeStages, nextNodeID)
+
+	edgeStages, unresolvedEdges, err := g.stageEdges(ctx, results...)
+	if err != nil {
+		return err
+	}
+	if err := g.persistStagedEdges(ctx, edgeStages, unresolvedEdges); err != nil {
+		return err
+	}
+	g.applyStagedEdges(edgeStages)
+
+	return nil
+}
+
+type stagedNodeUpsert struct {
+	id       int64
+	node     *parser.Node
+	addToMap bool
+}
+
+type graphEdgeKey struct {
+	fromID int64
+	toID   int64
+	typ    parser.EdgeType
+}
+
+type stagedGraphEdge struct {
+	fromID   int64
+	toID     int64
+	edge     *parser.Edge
+	existing *parser.Edge
+	isNew    bool
+	changed  bool
+}
+
+func (g *Graph) stageNodes(ctx context.Context, results ...*parser.ParseResult) (map[string]*stagedNodeUpsert, int64, error) {
+	stages := make(map[string]*stagedNodeUpsert)
+	nextNodeID := g.nextNodeID
+
 	for _, result := range results {
 		if result == nil {
 			continue
 		}
 		for _, node := range result.Nodes {
-			if _, err := g.AddNode(ctx, node); err != nil {
-				return err
+			if err := ctx.Err(); err != nil {
+				return nil, nextNodeID, err
 			}
+			if node == nil {
+				continue
+			}
+
+			if staged, ok := stages[node.ID]; ok {
+				if shouldReplaceNode(staged.node, node) {
+					staged.node = node
+				}
+				continue
+			}
+
+			if id, exists := g.nodeMap[node.ID]; exists {
+				if g.nodes[id] == nil || shouldReplaceNode(g.nodes[id], node) {
+					stages[node.ID] = &stagedNodeUpsert{id: id, node: node}
+				}
+				continue
+			}
+
+			nextNodeID++
+			stages[node.ID] = &stagedNodeUpsert{id: nextNodeID, node: node, addToMap: true}
 		}
 	}
+
+	return stages, nextNodeID, nil
+}
+
+func (g *Graph) persistStagedNodes(ctx context.Context, stages map[string]*stagedNodeUpsert) error {
+	entries := newStorageEntryBuffer(ctx)
+	for _, stage := range stages {
+		entry, err := g.nodeStorageEntry(stage.node)
+		if err != nil {
+			return err
+		}
+		if err := entries.Add(g.storageForNode(stage.node), entry); err != nil {
+			return fmt.Errorf("persist graph nodes: %w", err)
+		}
+	}
+	if err := entries.Flush(); err != nil {
+		return fmt.Errorf("persist graph nodes: %w", err)
+	}
+	return nil
+}
+
+func (g *Graph) applyStagedNodes(stages map[string]*stagedNodeUpsert, nextNodeID int64) {
+	for _, stage := range stages {
+		if stage.addToMap {
+			g.nodeMap[stage.node.ID] = stage.id
+		}
+		g.nodes[stage.id] = stage.node
+	}
+	g.nextNodeID = nextNodeID
+}
+
+func (g *Graph) stageEdges(ctx context.Context, results ...*parser.ParseResult) (map[graphEdgeKey]*stagedGraphEdge, []*parser.Edge, error) {
+	stages := make(map[graphEdgeKey]*stagedGraphEdge)
+	var unresolved []*parser.Edge
 
 	for _, result := range results {
 		if result == nil {
 			continue
 		}
 		for _, edge := range result.Edges {
-			if err := g.AddEdge(ctx, edge); err != nil {
-				if !errors.Is(err, ErrUnknownEdgeEndpoint) {
-					return err
-				}
-				// Keep unresolved edges in storage so multi-DB loads can resolve
-				// them after all repos contribute their nodes.
-				if persistErr := g.persistEdge(ctx, edge); persistErr != nil {
-					return persistErr
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			if edge == nil {
+				continue
+			}
+			fromID, fromExists := g.nodeMap[edge.From]
+			toID, toExists := g.nodeMap[edge.To]
+			if !fromExists || !toExists {
+				unresolved = append(unresolved, edge)
+				continue
+			}
+
+			key := graphEdgeKey{fromID: fromID, toID: toID, typ: edge.Type}
+			if staged, ok := stages[key]; ok {
+				if occurrences, changed := edgeOccurrencesAfterMerge(staged.edge, edge); changed {
+					staged.edge.Occurrences = occurrences
+					staged.changed = true
 				}
 				continue
+			}
+
+			existing := g.findEdgeByType(fromID, toID, edge.Type)
+			if existing != nil {
+				staged := &stagedGraphEdge{
+					fromID:   fromID,
+					toID:     toID,
+					edge:     cloneEdge(existing),
+					existing: existing,
+				}
+				if occurrences, changed := edgeOccurrencesAfterMerge(staged.edge, edge); changed {
+					staged.edge.Occurrences = occurrences
+					staged.changed = true
+				}
+				stages[key] = staged
+				continue
+			}
+
+			stages[key] = &stagedGraphEdge{
+				fromID:  fromID,
+				toID:    toID,
+				edge:    cloneEdge(edge),
+				isNew:   true,
+				changed: true,
 			}
 		}
 	}
 
+	return stages, unresolved, nil
+}
+
+func (g *Graph) findEdgeByType(fromID int64, toID int64, edgeType parser.EdgeType) *parser.Edge {
+	for _, edge := range g.edges[fromID][toID] {
+		if edge != nil && edge.Type == edgeType {
+			return edge
+		}
+	}
+	return nil
+}
+
+func (g *Graph) persistStagedEdges(ctx context.Context, stages map[graphEdgeKey]*stagedGraphEdge, unresolved []*parser.Edge) error {
+	entries := newStorageEntryBuffer(ctx)
+
+	for _, edge := range unresolved {
+		entry, err := g.edgeStorageEntry(edge)
+		if err != nil {
+			return err
+		}
+		if err := entries.Add(g.storageForEdge(edge), entry); err != nil {
+			return fmt.Errorf("persist graph edges: %w", err)
+		}
+	}
+
+	for _, stage := range stages {
+		if !stage.isNew && !stage.changed {
+			continue
+		}
+		entry, err := g.edgeStorageEntry(stage.edge)
+		if err != nil {
+			return err
+		}
+		if err := entries.Add(g.storageForEdge(stage.edge), entry); err != nil {
+			return fmt.Errorf("persist graph edges: %w", err)
+		}
+	}
+
+	if err := entries.Flush(); err != nil {
+		return fmt.Errorf("persist graph edges: %w", err)
+	}
+	return nil
+}
+
+func (g *Graph) applyStagedEdges(stages map[graphEdgeKey]*stagedGraphEdge) {
+	for _, stage := range stages {
+		if stage.existing != nil {
+			if stage.changed {
+				stage.existing.Occurrences = stage.edge.Occurrences
+			}
+			continue
+		}
+		if g.edges[stage.fromID] == nil {
+			g.edges[stage.fromID] = make(map[int64][]*parser.Edge)
+		}
+		g.edges[stage.fromID][stage.toID] = append(g.edges[stage.fromID][stage.toID], stage.edge)
+	}
+}
+
+type storageEntryBuffer struct {
+	ctx     context.Context
+	limit   int
+	entries map[storage.Storage][]storage.Entry
+}
+
+func newStorageEntryBuffer(ctx context.Context) *storageEntryBuffer {
+	return &storageEntryBuffer{
+		ctx:     ctx,
+		limit:   maxPersistBatchEntries,
+		entries: make(map[storage.Storage][]storage.Entry),
+	}
+}
+
+func (b *storageEntryBuffer) Add(store storage.Storage, entry storage.Entry) error {
+	if store == nil {
+		return nil
+	}
+	entries := append(b.entries[store], entry)
+	b.entries[store] = entries
+	if len(entries) >= b.limit {
+		return b.flushStore(store, entries)
+	}
+	return nil
+}
+
+func (b *storageEntryBuffer) Flush() error {
+	for store, entries := range b.entries {
+		if err := b.flushStore(store, entries); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *storageEntryBuffer) flushStore(store storage.Storage, entries []storage.Entry) error {
+	if len(entries) == 0 {
+		delete(b.entries, store)
+		return nil
+	}
+	if batchStore, ok := store.(storage.BatchPutter); ok {
+		if err := batchStore.PutBatch(b.ctx, entries); err != nil {
+			return err
+		}
+		delete(b.entries, store)
+		return nil
+	}
+	for _, entry := range entries {
+		if err := b.ctx.Err(); err != nil {
+			return err
+		}
+		if err := store.Put(b.ctx, entry.Key, entry.Value); err != nil {
+			return err
+		}
+	}
+	delete(b.entries, store)
 	return nil
 }
 
@@ -200,14 +477,22 @@ func (g *Graph) persistNode(ctx context.Context, pNode *parser.Node) error {
 	if store == nil {
 		return nil
 	}
-	data, err := json.Marshal(pNode)
+	entry, err := g.nodeStorageEntry(pNode)
 	if err != nil {
-		return fmt.Errorf("marshal node %q: %w", pNode.ID, err)
+		return err
 	}
-	if err := store.Put(ctx, []byte("node:"+pNode.ID), data); err != nil {
+	if err := store.Put(ctx, entry.Key, entry.Value); err != nil {
 		return fmt.Errorf("persist node %q: %w", pNode.ID, err)
 	}
 	return nil
+}
+
+func (g *Graph) nodeStorageEntry(pNode *parser.Node) (storage.Entry, error) {
+	data, err := json.Marshal(pNode)
+	if err != nil {
+		return storage.Entry{}, fmt.Errorf("marshal node %q: %w", pNode.ID, err)
+	}
+	return storage.Entry{Key: []byte("node:" + pNode.ID), Value: data}, nil
 }
 
 func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) error {
@@ -215,14 +500,22 @@ func (g *Graph) persistEdge(ctx context.Context, pEdge *parser.Edge) error {
 	if store == nil {
 		return nil
 	}
-	data, err := json.Marshal(pEdge)
+	entry, err := g.edgeStorageEntry(pEdge)
 	if err != nil {
-		return fmt.Errorf("marshal edge %q -> %q: %w", pEdge.From, pEdge.To, err)
+		return err
 	}
-	if err := store.Put(ctx, edgeStorageKey(pEdge), data); err != nil {
+	if err := store.Put(ctx, entry.Key, entry.Value); err != nil {
 		return fmt.Errorf("persist edge %q -> %q (%s): %w", pEdge.From, pEdge.To, pEdge.Type, err)
 	}
 	return nil
+}
+
+func (g *Graph) edgeStorageEntry(pEdge *parser.Edge) (storage.Entry, error) {
+	data, err := json.Marshal(pEdge)
+	if err != nil {
+		return storage.Entry{}, fmt.Errorf("marshal edge %q -> %q: %w", pEdge.From, pEdge.To, err)
+	}
+	return storage.Entry{Key: edgeStorageKey(pEdge), Value: data}, nil
 }
 
 func (g *Graph) storageForNode(pNode *parser.Node) storage.Storage {

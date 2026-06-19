@@ -82,6 +82,33 @@ func TestBadgerStorageIterate(t *testing.T) {
 	assert.Equal(t, 3, count)
 }
 
+func TestBadgerStoragePutBatch(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewBadgerStorage(dir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+	batchStore := store.(BatchPutter)
+	require.NoError(t, batchStore.PutBatch(ctx, []Entry{
+		{Key: []byte("node:1"), Value: []byte("data1")},
+		{Key: []byte("edge:1"), Value: []byte("data2")},
+	}))
+
+	val, err := store.Get(ctx, []byte("node:1"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("data1"), val)
+	val, err = store.Get(ctx, []byte("edge:1"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("data2"), val)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	err = batchStore.PutBatch(canceled, []Entry{{Key: []byte("node:2"), Value: []byte("data3")}})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 func TestBadgerStorageIteratePrefix(t *testing.T) {
 	dir := t.TempDir()
 

@@ -20,6 +20,18 @@ type Storage interface {
 	Close() error
 }
 
+// Entry is a key-value write used by batch-capable storage backends.
+type Entry struct {
+	Key   []byte
+	Value []byte
+}
+
+// BatchPutter is implemented by storage backends that can persist multiple
+// entries with less per-key overhead than repeated Put calls.
+type BatchPutter interface {
+	PutBatch(ctx context.Context, entries []Entry) error
+}
+
 // PrefixIterator is implemented by storage backends that can efficiently scan
 // keys with a shared prefix.
 type PrefixIterator interface {

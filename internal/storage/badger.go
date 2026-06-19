@@ -66,6 +66,30 @@ func (b *badgerStorage) Put(ctx context.Context, key []byte, value []byte) error
 	return nil
 }
 
+func (b *badgerStorage) PutBatch(ctx context.Context, entries []Entry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	wb := b.db.NewWriteBatch()
+	defer wb.Cancel()
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := wb.Set(entry.Key, entry.Value); err != nil {
+			return fmt.Errorf("failed to batch put key: %w", err)
+		}
+	}
+	if err := wb.Flush(); err != nil {
+		return fmt.Errorf("failed to flush batch: %w", err)
+	}
+	return nil
+}
+
 func (b *badgerStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

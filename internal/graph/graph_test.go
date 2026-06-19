@@ -101,6 +101,48 @@ func TestAddEdgeMergesCallOccurrences(t *testing.T) {
 	}, g.edges[fromID][toID][0].Occurrences)
 }
 
+func TestBuildFromParseResultUsesBatchPersistenceAndMergesEdges(t *testing.T) {
+	ctx := context.Background()
+	store := newRecordingBatchStorage()
+	g := NewGraph(store)
+
+	require.NoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "funcA", Type: parser.NodeTypeFunc, Name: "FuncA"},
+			{ID: "funcB", Type: parser.NodeTypeFunc, Name: "FuncB"},
+		},
+		Edges: []*parser.Edge{
+			{
+				From: "funcA",
+				To:   "funcB",
+				Type: parser.EdgeTypeCalls,
+				Occurrences: []parser.EdgeOccurrence{
+					{FilePath: "main.go", Line: 10, Column: 2},
+				},
+			},
+			{
+				From: "funcA",
+				To:   "funcB",
+				Type: parser.EdgeTypeCalls,
+				Occurrences: []parser.EdgeOccurrence{
+					{FilePath: "main.go", Line: 12, Column: 2},
+				},
+			},
+		},
+	}))
+
+	assert.Zero(t, store.putCalls)
+	require.Len(t, store.batches, 2)
+
+	fromID := g.nodeMap["funcA"]
+	toID := g.nodeMap["funcB"]
+	require.Len(t, g.edges[fromID][toID], 1)
+	assert.ElementsMatch(t, []parser.EdgeOccurrence{
+		{FilePath: "main.go", Line: 10, Column: 2},
+		{FilePath: "main.go", Line: 12, Column: 2},
+	}, g.edges[fromID][toID][0].Occurrences)
+}
+
 func TestAddEdgePreservesSelfEdgesForExport(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)
@@ -471,5 +513,59 @@ func (f failingStorage) Delete(ctx context.Context, key []byte) error {
 }
 
 func (f failingStorage) Close() error {
+	return nil
+}
+
+type recordingBatchStorage struct {
+	data     map[string][]byte
+	putCalls int
+	batches  [][]storage.Entry
+}
+
+func newRecordingBatchStorage() *recordingBatchStorage {
+	return &recordingBatchStorage{data: make(map[string][]byte)}
+}
+
+func (r *recordingBatchStorage) Put(ctx context.Context, key []byte, value []byte) error {
+	r.putCalls++
+	r.data[string(key)] = append([]byte(nil), value...)
+	return nil
+}
+
+func (r *recordingBatchStorage) PutBatch(ctx context.Context, entries []storage.Entry) error {
+	copied := make([]storage.Entry, 0, len(entries))
+	for _, entry := range entries {
+		key := append([]byte(nil), entry.Key...)
+		value := append([]byte(nil), entry.Value...)
+		copied = append(copied, storage.Entry{Key: key, Value: value})
+		r.data[string(key)] = value
+	}
+	r.batches = append(r.batches, copied)
+	return nil
+}
+
+func (r *recordingBatchStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
+	value, ok := r.data[string(key)]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (r *recordingBatchStorage) Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error {
+	for key, value := range r.data {
+		if err := fn([]byte(key), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *recordingBatchStorage) Delete(ctx context.Context, key []byte) error {
+	delete(r.data, string(key))
+	return nil
+}
+
+func (r *recordingBatchStorage) Close() error {
 	return nil
 }
