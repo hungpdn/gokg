@@ -160,3 +160,28 @@ func TestExecuteCypher_EdgeWhereChecksAllEdgesBetweenPair(t *testing.T) {
 	require.Len(t, res, 1)
 	assert.Equal(t, "IMPORTS", res[0]["r.Type"])
 }
+
+func TestExecuteCypherLimitReturnsProjectedRows(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+
+	for _, node := range []*parser.Node{
+		{ID: "funcA", Type: parser.NodeTypeFunc, Name: "A"},
+		{ID: "funcB", Type: parser.NodeTypeFunc, Name: "B"},
+		{ID: "funcC", Type: parser.NodeTypeFunc, Name: "C"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	input := `MATCH (n:FUNC) RETURN n.Name LIMIT 2`
+	q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+	require.NoError(t, err)
+
+	res, err := g.Query().ExecuteCypher(q)
+	require.NoError(t, err)
+	require.Len(t, res, 2)
+	for _, row := range res {
+		assert.Contains(t, row, "n.Name")
+	}
+}

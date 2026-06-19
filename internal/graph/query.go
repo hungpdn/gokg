@@ -260,29 +260,34 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 // GetSourceCode reads the source code of the given node from disk.
 func (qb *QueryBuilder) GetSourceCode(nodeID string) (string, error) {
 	qb.g.mu.RLock()
-	defer qb.g.mu.RUnlock()
 
 	numID, exists := qb.g.nodeMap[nodeID]
 	if !exists {
+		qb.g.mu.RUnlock()
 		return "", fmt.Errorf("node not found: %s", nodeID)
 	}
 
 	pNode := qb.g.nodes[numID]
 	if pNode == nil {
+		qb.g.mu.RUnlock()
 		return "", fmt.Errorf("node data missing: %s", nodeID)
 	}
 
-	if pNode.FilePath == "" {
+	filePath := pNode.FilePath
+	lines := pNode.Lines
+	qb.g.mu.RUnlock()
+
+	if filePath == "" {
 		return "", fmt.Errorf("node %s has no file path", nodeID)
 	}
 
-	if pNode.Lines[0] == 0 && pNode.Lines[1] == 0 {
+	if lines[0] == 0 && lines[1] == 0 {
 		return "", fmt.Errorf("node %s has no line range info", nodeID)
 	}
 
-	f, err := os.Open(pNode.FilePath)
+	f, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open file %s: %w", pNode.FilePath, err)
+		return "", fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
 	defer f.Close()
 
@@ -291,17 +296,17 @@ func (qb *QueryBuilder) GetSourceCode(nodeID string) (string, error) {
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
-		if lineNum >= pNode.Lines[0] && lineNum <= pNode.Lines[1] {
+		if lineNum >= lines[0] && lineNum <= lines[1] {
 			b.WriteString(scanner.Text())
 			b.WriteByte('\n')
 		}
-		if lineNum > pNode.Lines[1] {
+		if lineNum > lines[1] {
 			break
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading file %s: %w", pNode.FilePath, err)
+		return "", fmt.Errorf("error reading file %s: %w", filePath, err)
 	}
 
 	return b.String(), nil

@@ -74,7 +74,7 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 	}
 
 	pattern := q.Match.Pattern
-	results := make([]CypherResultRow, 0)
+	results := make([]CypherResultRow, 0, cypherResultCapacity(q.Limit))
 
 	for _, node1 := range qb.g.nodes {
 		if !matchesCypherNodeType(node1, pattern.Node1.Type) {
@@ -84,8 +84,14 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 		if pattern.Edge == nil || pattern.Node2 == nil {
 			row := make(CypherResultRow)
 			bindCypherAlias(row, pattern.Node1.Alias, node1)
-			if cypherRowMatchesWhere(q.Where, row) {
-				results = append(results, row)
+			var done bool
+			var err error
+			results, done, err = appendProjectedCypherRow(results, q, row)
+			if err != nil {
+				return nil, err
+			}
+			if done {
+				return results, nil
 			}
 			continue
 		}
@@ -101,7 +107,15 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 				if !matchesCypherNodeType(node2, pattern.Node2.Type) {
 					continue
 				}
-				results = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
+				var done bool
+				var err error
+				results, done, err = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
+				if err != nil {
+					return nil, err
+				}
+				if done {
+					return results, nil
+				}
 			}
 		}
 
@@ -118,35 +132,20 @@ func (qb *QueryBuilder) ExecuteCypher(q *cypher.Query) ([]CypherResultRow, error
 				if !ok {
 					continue
 				}
-				results = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
+				var done bool
+				var err error
+				results, done, err = appendCypherEdgeRows(results, q, pattern, node1, node2, edges)
+				if err != nil {
+					return nil, err
+				}
+				if done {
+					return results, nil
+				}
 			}
 		}
 	}
 
-	finalResults := make([]CypherResultRow, 0, len(results))
-	for _, row := range results {
-		finalRow := make(CypherResultRow)
-		for _, item := range q.Return.Items {
-			val := row[item.Alias]
-			if item.Property == "" {
-				finalRow[item.Alias] = val
-				continue
-			}
-
-			propVal, ok := cypherPropertyValue(val, item.Property)
-			if !ok {
-				return nil, fmt.Errorf("unknown property %q for alias %q", item.Property, item.Alias)
-			}
-			finalRow[item.Alias+"."+item.Property] = propVal
-		}
-		finalResults = append(finalResults, finalRow)
-
-		if q.Limit > 0 && len(finalResults) >= q.Limit {
-			break
-		}
-	}
-
-	return finalResults, nil
+	return results, nil
 }
 
 func appendCypherEdgeRows(
@@ -156,7 +155,7 @@ func appendCypherEdgeRows(
 	node1 *parser.Node,
 	node2 *parser.Node,
 	edges []*parser.Edge,
-) []CypherResultRow {
+) ([]CypherResultRow, bool, error) {
 	for _, edge := range edges {
 		if !matchesCypherEdgeType(edge, pattern.Edge.Type) {
 			continue
@@ -165,14 +164,48 @@ func appendCypherEdgeRows(
 		bindCypherAlias(row, pattern.Node1.Alias, node1)
 		bindCypherAlias(row, pattern.Node2.Alias, node2)
 		bindCypherAlias(row, pattern.Edge.Alias, edge)
-		if cypherRowMatchesWhere(q.Where, row) {
-			results = append(results, row)
+		var done bool
+		var err error
+		results, done, err = appendProjectedCypherRow(results, q, row)
+		if err != nil || done {
+			return results, done, err
 		}
 		if pattern.Edge.Type != "" {
 			break // A graph pair has at most one edge for a specific type.
 		}
 	}
-	return results
+	return results, false, nil
+}
+
+func appendProjectedCypherRow(results []CypherResultRow, q *cypher.Query, row CypherResultRow) ([]CypherResultRow, bool, error) {
+	if !cypherRowMatchesWhere(q.Where, row) {
+		return results, false, nil
+	}
+
+	finalRow := make(CypherResultRow, len(q.Return.Items))
+	for _, item := range q.Return.Items {
+		val := row[item.Alias]
+		if item.Property == "" {
+			finalRow[item.Alias] = val
+			continue
+		}
+
+		propVal, ok := cypherPropertyValue(val, item.Property)
+		if !ok {
+			return results, false, fmt.Errorf("unknown property %q for alias %q", item.Property, item.Alias)
+		}
+		finalRow[item.Alias+"."+item.Property] = propVal
+	}
+
+	results = append(results, finalRow)
+	return results, q.Limit > 0 && len(results) >= q.Limit, nil
+}
+
+func cypherResultCapacity(limit int) int {
+	if limit > 0 {
+		return limit
+	}
+	return 0
 }
 
 func validateCypherQuery(q *cypher.Query) error {

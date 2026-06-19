@@ -3,6 +3,7 @@ package graph
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hungpdn/gokg/internal/parser"
@@ -14,9 +15,11 @@ func (g *Graph) ExportJSON() (string, error) {
 	defer g.mu.RUnlock()
 
 	var out struct {
-		Nodes []interface{} `json:"nodes"`
-		Edges []interface{} `json:"edges"`
+		Nodes []*parser.Node `json:"nodes"`
+		Edges []*parser.Edge `json:"edges"`
 	}
+	out.Nodes = make([]*parser.Node, 0, len(g.nodes))
+	out.Edges = make([]*parser.Edge, 0, g.edgeCountLocked())
 
 	for _, node := range g.nodes {
 		out.Nodes = append(out.Nodes, node)
@@ -35,6 +38,16 @@ func (g *Graph) ExportJSON() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func (g *Graph) edgeCountLocked() int {
+	count := 0
+	for _, edgeMap := range g.edges {
+		for _, edges := range edgeMap {
+			count += len(edges)
+		}
+	}
+	return count
 }
 
 // ExportMermaid exports the graph to Mermaid flowchart format.
@@ -102,11 +115,18 @@ func dotEdgeAttrs(edge *parser.Edge) string {
 }
 
 func edgeOccurrenceLines(occurrences []parser.EdgeOccurrence) string {
-	lines := make([]string, 0, len(occurrences))
-	for _, occurrence := range occurrences {
-		lines = append(lines, fmt.Sprintf("%s:%d:%d", occurrence.FilePath, occurrence.Line, occurrence.Column))
+	var b strings.Builder
+	for i, occurrence := range occurrences {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(occurrence.FilePath)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(occurrence.Line))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(occurrence.Column))
 	}
-	return strings.Join(lines, ",")
+	return b.String()
 }
 
 func dotQuote(s string) string {
