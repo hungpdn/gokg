@@ -51,7 +51,7 @@ func (p *Parser) WithTests(includeTests bool) *Parser {
 func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
 		Tests:   p.IncludeTests,
@@ -342,12 +342,11 @@ func isInsideWorkspace(rel string) bool {
 }
 
 // ParsePackage parses a single package directory and returns its entities.
-// It loads full transitive dependencies (NeedDeps) to resolve cross-package
-// type information. Prefer ParsePackageIncremental for watch-mode updates.
+// Prefer ParsePackageIncremental for watch-mode updates.
 func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
 		Context: ctx,
 		Dir:     dir,
 		Tests:   p.IncludeTests,
