@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/mcp"
@@ -17,7 +18,7 @@ import (
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Start the MCP server",
-	Long:  `Start the gokg MCP (Model Context Protocol) server communicating via stdio for AI agents.`,
+	Long:  `Start the gokg MCP (Model Context Protocol) server for AI agents. By default it communicates over stdio; pass --http to serve JSON-RPC over HTTP.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
@@ -25,6 +26,9 @@ var mcpCmd = &cobra.Command{
 		enableWatch, _ := cmd.Flags().GetBool("watch")
 		modulePrefix, _ := cmd.Flags().GetString("module")
 		workspaceName, _ := cmd.Flags().GetString("workspace")
+		httpMode, _ := cmd.Flags().GetBool("http")
+		httpAddr, _ := cmd.Flags().GetString("addr")
+		httpPath, _ := cmd.Flags().GetString("path")
 
 		if workspaceName != "" {
 			if cmd.Flags().Changed("db") {
@@ -83,7 +87,7 @@ var mcpCmd = &cobra.Command{
 			}
 
 			server := mcp.NewServer(g)
-			return server.Start(ctx)
+			return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 		}
 
 		analysisRoot, err := resolveGoAnalysisRoot(".")
@@ -140,7 +144,7 @@ var mcpCmd = &cobra.Command{
 		}
 
 		server := mcp.NewServer(g)
-		return server.Start(ctx)
+		return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 	},
 }
 
@@ -149,4 +153,33 @@ func init() {
 	mcpCmd.Flags().String("workspace", "", "Workspace name to serve by merging per-repo databases")
 	mcpCmd.Flags().Bool("watch", true, "Enable real-time incremental analysis on file change")
 	mcpCmd.Flags().String("module", "", "Module prefix for internal packages")
+	mcpCmd.Flags().Bool("http", false, "Serve MCP over HTTP instead of stdio")
+	mcpCmd.Flags().String("addr", "127.0.0.1:8080", "HTTP MCP listen address")
+	mcpCmd.Flags().String("path", "/mcp", "HTTP MCP endpoint path")
+}
+
+func startMCPTransport(ctx context.Context, cmd *cobra.Command, server *mcp.Server, httpMode bool, httpAddr string, httpPath string) error {
+	if !httpMode {
+		return server.Start(ctx)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "HTTP MCP server listening at %s\n", mcpHTTPURL(httpAddr, httpPath))
+	return server.StartHTTP(ctx, httpAddr, httpPath)
+}
+
+func mcpHTTPURL(addr string, path string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/mcp"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return "http://" + addr + path
 }

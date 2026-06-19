@@ -59,7 +59,10 @@ gokg analyze --db .gokg/ --rebuild
 ```bash
 gokg mcp
 gokg mcp --workspace my-platform
+gokg mcp --http --addr 127.0.0.1:8080
 ```
+
+`gokg mcp --http` serves JSON-RPC over HTTP at `/mcp` by default and exposes a health check at `/healthz`. Use `--path` to change the MCP endpoint.
 
 ### 3. Run a Cypher Query
 
@@ -170,7 +173,7 @@ Full reference: [docs/cypher-reference.md](docs/cypher-reference.md)
 
 ## Integrating with AI Agents
 
-Because GoKG exposes an MCP server over standard input/output (`stdio`), you can easily connect it to AI clients like Claude Desktop, Cursor, or VSCode extensions (Cline, Roo Code).
+Because GoKG exposes an MCP server over standard input/output (`stdio`) and optional HTTP, you can connect it to AI clients like Claude Desktop, Cursor, or VSCode extensions (Cline, Roo Code).
 
 ### Claude Desktop
 Add this to your `claude_desktop_config.json`:
@@ -190,6 +193,16 @@ Add this to your `claude_desktop_config.json`:
 1. Open Settings -> Features -> MCP
 2. Click **Add Server**
 3. Set Name to `GoKG`, Type to `stdio`, and Command to `gokg mcp --watch`
+
+For HTTP-capable clients, start GoKG separately:
+```bash
+gokg mcp --http --addr 127.0.0.1:8080 --watch
+```
+
+Then configure the client URL as:
+```text
+http://127.0.0.1:8080/mcp
+```
 
 ### VSCode (Cline / Roo Code)
 Add this to the agent's `mcp_config.json`:
