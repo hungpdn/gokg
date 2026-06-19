@@ -132,6 +132,49 @@ func (g *Graph) AddEdge(ctx context.Context, pEdge *parser.Edge) error {
 	return nil
 }
 
+func (g *Graph) loadNodeLocked(pNode *parser.Node) {
+	if pNode == nil {
+		return
+	}
+
+	if id, exists := g.nodeMap[pNode.ID]; exists {
+		if g.nodes[id] == nil || shouldReplaceNode(g.nodes[id], pNode) {
+			g.nodes[id] = pNode
+		}
+		return
+	}
+
+	g.nextNodeID++
+	id := g.nextNodeID
+	g.nodeMap[pNode.ID] = id
+	g.nodes[id] = pNode
+}
+
+func (g *Graph) loadEdgeLocked(pEdge *parser.Edge) error {
+	if pEdge == nil {
+		return nil
+	}
+
+	fromID, fromExists := g.nodeMap[pEdge.From]
+	toID, toExists := g.nodeMap[pEdge.To]
+	if !fromExists || !toExists {
+		return fmt.Errorf("%w: %s -> %s", ErrUnknownEdgeEndpoint, pEdge.From, pEdge.To)
+	}
+
+	if g.edges[fromID] == nil {
+		g.edges[fromID] = make(map[int64][]*parser.Edge)
+	}
+	for _, edge := range g.edges[fromID][toID] {
+		if edge.Type == pEdge.Type {
+			mergeEdgeOccurrences(edge, pEdge)
+			return nil
+		}
+	}
+
+	g.edges[fromID][toID] = append(g.edges[fromID][toID], pEdge)
+	return nil
+}
+
 func mergeEdgeOccurrences(existing, candidate *parser.Edge) bool {
 	occurrences, changed := edgeOccurrencesAfterMerge(existing, candidate)
 	if changed {
@@ -597,24 +640,20 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 		}
 	}
 
-	// Temporarily unset stores so AddNode and AddEdge don't write back to DB
-	store := g.store
-	repoStores := g.repoStores
-	g.store = nil
-	g.repoStores = nil
-	defer func() {
-		g.store = store
-		g.repoStores = repoStores
-	}()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	// First pass: load all nodes
 	for _, store := range stores {
 		err := iterateStoragePrefix(ctx, store, []byte("node:"), func(key []byte, value []byte) error {
-			var pNode parser.Node
-			if err := json.Unmarshal(value, &pNode); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
-			_, _ = g.AddNode(ctx, &pNode)
+			pNode := new(parser.Node)
+			if err := json.Unmarshal(value, pNode); err != nil {
+				return err
+			}
+			g.loadNodeLocked(pNode)
 			return nil
 		})
 
@@ -626,11 +665,14 @@ func (g *Graph) LoadFromStorages(ctx context.Context, stores ...storage.Storage)
 	// Second pass: load all edges
 	for _, store := range stores {
 		err := iterateStoragePrefix(ctx, store, []byte("edge:"), func(key []byte, value []byte) error {
-			var pEdge parser.Edge
-			if err := json.Unmarshal(value, &pEdge); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := g.AddEdge(ctx, &pEdge); err != nil && !errors.Is(err, ErrUnknownEdgeEndpoint) {
+			pEdge := new(parser.Edge)
+			if err := json.Unmarshal(value, pEdge); err != nil {
+				return err
+			}
+			if err := g.loadEdgeLocked(pEdge); err != nil && !errors.Is(err, ErrUnknownEdgeEndpoint) {
 				return err
 			}
 			return nil

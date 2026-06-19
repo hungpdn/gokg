@@ -2,7 +2,6 @@ package parser
 
 import (
 	"strings"
-	"sync"
 )
 
 // NodeType defines the type of a parsed node
@@ -67,39 +66,14 @@ type EdgeOccurrence struct {
 	Column   int    `json:"column,omitempty"`
 }
 
-// Memory Optimization: Object pools for Node and Edge
-var nodePool = sync.Pool{
-	New: func() interface{} {
-		return new(Node)
-	},
-}
-
-var edgePool = sync.Pool{
-	New: func() interface{} {
-		return new(Edge)
-	},
-}
-
-// NewNode acquires a Node from the pool
+// NewNode creates a graph node.
 func NewNode() *Node {
-	return nodePool.Get().(*Node)
+	return &Node{}
 }
 
-// ReleaseNode resets and returns a Node to the pool
-func ReleaseNode(n *Node) {
-	*n = Node{} // Reset
-	nodePool.Put(n)
-}
-
-// NewEdge acquires an Edge from the pool
+// NewEdge creates a graph edge.
 func NewEdge() *Edge {
-	return edgePool.Get().(*Edge)
-}
-
-// ReleaseEdge resets and returns an Edge to the pool
-func ReleaseEdge(e *Edge) {
-	*e = Edge{} // Reset
-	edgePool.Put(e)
+	return &Edge{}
 }
 
 // BuildID optimizes string concatenation for node IDs using strings.Builder
