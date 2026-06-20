@@ -17,8 +17,8 @@ First off, thank you for considering contributing to GoKG! It's people like you 
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs, update the documentation.
 4. Ensure the test suite passes (`go test ./...`).
-5. Make sure your code lints (`golangci-lint run`).
-6. Issue that pull request!
+5. For release-related changes, run `goreleaser check` if GoReleaser is installed.
+6. Open the pull request and fill out the checklist.
 
 ## Local Development Setup
 1. Clone your fork locally.
@@ -29,5 +29,8 @@ First off, thank you for considering contributing to GoKG! It's people like you 
 
 ## Code Style
 We follow standard Go formatting conventions. Please run `go fmt ./...` before committing.
+
+## Security Reports
+Please do not open public issues for suspected vulnerabilities. See [SECURITY.md](SECURITY.md) for the reporting process.
 
 By contributing, you agree that your contributions will be licensed under its MIT License.

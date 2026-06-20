@@ -1,5 +1,7 @@
 # GoKG - Golang Knowledge Graph
 
+[![Go](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
+[![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -110,7 +112,7 @@ git tag v0.1.0-alpha.1
 git push origin v0.1.0-alpha.1
 ```
 
-The release workflow uses GoReleaser to build `gokg` for Linux, macOS, and Windows, inject `version`, `commit`, and `date` metadata, package archives, generate checksums, and publish a GitHub Release.
+The release workflow uses GoReleaser to build `gokg` for Linux, macOS, and Windows, inject `version`, `commit`, and `date` metadata, package archives, generate checksums, and publish a GitHub Release. See [docs/release.md](docs/release.md) for the full release checklist.
 
 ---
 
@@ -308,7 +310,7 @@ For `HTTP`
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

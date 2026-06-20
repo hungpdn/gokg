@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem in GoKG.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make GoKG more reliable. Please include enough detail for someone else to reproduce the issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Commands, repository shape, or a minimal code sample that triggers the bug.
+      placeholder: |
+        1. Run `gokg analyze --rebuild`
+        2. Run `gokg query '...'`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or error
+      description: Paste relevant output, stack traces, or logs.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste `gokg version --json`, `go version`, and OS details.
+      render: json
+      placeholder: |
+        {
+          "version": "dev",
+          "commit": "none",
+          "date": "unknown",
+          "go_version": "go1.25.0",
+          "platform": "darwin/amd64"
+        }
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
