@@ -99,7 +99,7 @@ func loadStatsGraph(ctx context.Context, cmd *cobra.Command, dbPath string, work
 		for _, repo := range repos {
 			dbPaths = append(dbPaths, ws.GetRepoDBPath(repo.ID))
 		}
-		return g, dbPaths, fmt.Sprintf("workspace %q", workspaceName), nil
+		return g, dbPaths, statsSource("workspace", workspaceName), nil
 	}
 
 	store, err := storage.NewBadgerStorageReadOnly(dbPath)
@@ -112,7 +112,11 @@ func loadStatsGraph(ctx context.Context, cmd *cobra.Command, dbPath string, work
 	if err := g.LoadFromStorage(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("failed to load graph: %w", err)
 	}
-	return g, []string{dbPath}, fmt.Sprintf("database %q", dbPath), nil
+	return g, []string{dbPath}, statsSource("database", dbPath), nil
+}
+
+func statsSource(kind string, value string) string {
+	return fmt.Sprintf("%s \"%s\"", kind, value)
 }
 
 func printStatsReport(out io.Writer, report statsReport) error {

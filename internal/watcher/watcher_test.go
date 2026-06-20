@@ -20,6 +20,12 @@ func setupTestGraphAndParser(t *testing.T) (*graph.Graph, *parser.Parser) {
 	if err != nil {
 		t.Fatalf("failed to create badger storage: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("failed to close badger storage: %v", err)
+		}
+	})
+
 	g := graph.NewGraph(store)
 	p := parser.NewParser("testmodule", "testmodule")
 	return g, p

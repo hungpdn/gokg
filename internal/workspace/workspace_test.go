@@ -10,9 +10,7 @@ import (
 )
 
 func TestInitAndLoad(t *testing.T) {
-	// Override home dir for testing
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("test-ws")
 	require.NoError(t, err)
@@ -38,8 +36,7 @@ func TestInitAndLoad(t *testing.T) {
 }
 
 func TestAddRepo(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("multi-repo-ws")
 	require.NoError(t, err)
@@ -61,8 +58,7 @@ func TestAddRepo(t *testing.T) {
 }
 
 func TestAddRepoRejectsDuplicateID(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("duplicate-repo-ws")
 	require.NoError(t, err)
@@ -75,8 +71,7 @@ func TestAddRepoRejectsDuplicateID(t *testing.T) {
 }
 
 func TestAddRepoRejectsDBPathCollision(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("collision-repo-ws")
 	require.NoError(t, err)
@@ -89,8 +84,7 @@ func TestAddRepoRejectsDBPathCollision(t *testing.T) {
 }
 
 func TestGetRepoDBPath(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("db-path-ws")
 	require.NoError(t, err)
@@ -101,16 +95,14 @@ func TestGetRepoDBPath(t *testing.T) {
 }
 
 func TestLoadNonExistent(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	_, err := Load("does-not-exist")
 	assert.Error(t, err)
 }
 
 func TestLoadRejectsUnsafeConfig(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	tmpHome := setTestHome(t)
 
 	wsDir := filepath.Join(tmpHome, workspaceDirName, "unsafe-ws")
 	require.NoError(t, os.MkdirAll(wsDir, 0o755))
@@ -129,8 +121,7 @@ func TestLoadRejectsUnsafeConfig(t *testing.T) {
 }
 
 func TestLoadRejectsWorkspaceNameMismatch(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	tmpHome := setTestHome(t)
 
 	wsDir := filepath.Join(tmpHome, workspaceDirName, "actual-ws")
 	require.NoError(t, os.MkdirAll(wsDir, 0o755))
@@ -143,8 +134,7 @@ func TestLoadRejectsWorkspaceNameMismatch(t *testing.T) {
 }
 
 func TestRemoveRepo(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	ws, err := Init("remove-test")
 	require.NoError(t, err)
@@ -165,8 +155,7 @@ func TestRemoveRepo(t *testing.T) {
 }
 
 func TestListWorkspaces(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	_, _ = Init("ws-alpha")
 	_, _ = Init("ws-beta")
@@ -178,12 +167,29 @@ func TestListWorkspaces(t *testing.T) {
 }
 
 func TestRejectsInvalidWorkspaceNames(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	_, err := Init("../escape")
 	assert.Error(t, err)
 
 	_, err = Load("../escape")
 	assert.Error(t, err)
+}
+
+func setTestHome(t *testing.T) string {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	volume := filepath.VolumeName(tmpHome)
+	homePath := tmpHome
+	if volume != "" {
+		homePath = tmpHome[len(volume):]
+	}
+	t.Setenv("HOMEDRIVE", volume)
+	t.Setenv("HOMEPATH", homePath)
+
+	return tmpHome
 }

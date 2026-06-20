@@ -109,8 +109,7 @@ func TestResolveGoAnalysisRootRejectsMultipleNestedModules(t *testing.T) {
 
 func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 	withGoBuildCache(t)
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	withTestHome(t)
 
 	repoA := newTinyGoProjectWithModule(t, "example.com/service-a")
 	repoB := newTinyGoProjectWithModule(t, "example.com/service-b")
@@ -152,8 +151,7 @@ func TestAnalyzeWorkspaceUsesPerRepoDBs(t *testing.T) {
 }
 
 func TestAnalyzeWorkspaceRejectsModuleFlag(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	withTestHome(t)
 
 	cmd := newAnalyzeCommand()
 	cmd.SetArgs([]string{"--workspace", "demo", "--module", "example.com/wrong"})
@@ -241,4 +239,22 @@ func withGoBuildCache(t *testing.T) {
 	t.Helper()
 
 	t.Setenv("GOCACHE", filepath.Join(t.TempDir(), "gocache"))
+}
+
+func withTestHome(t *testing.T) string {
+	t.Helper()
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+
+	volume := filepath.VolumeName(tmpHome)
+	homePath := tmpHome
+	if volume != "" {
+		homePath = tmpHome[len(volume):]
+	}
+	t.Setenv("HOMEDRIVE", volume)
+	t.Setenv("HOMEPATH", homePath)
+
+	return tmpHome
 }

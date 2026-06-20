@@ -57,6 +57,12 @@ func TestStatsCommandJSON(t *testing.T) {
 	assert.Equal(t, 1, report.Graph.NodesByKind["FILE"])
 }
 
+func TestStatsSourcePreservesWindowsPathBackslashes(t *testing.T) {
+	dbDir := `C:\Users\RUNNER~1\AppData\Local\Temp\TestStatsCommandJSON3330498526\001\stats-db`
+
+	assert.Equal(t, `database "`+dbDir+`"`, statsSource("database", dbDir))
+}
+
 func createStatsTestDB(t *testing.T) string {
 	t.Helper()
 
