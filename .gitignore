@@ -4,5 +4,6 @@
 .env
 .gokg/
 bin/
+dist/
 __debug*
 .codegraph

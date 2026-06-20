@@ -43,7 +43,7 @@ go install github.com/hungpdn/gokg/cmd/gokg@<version>
 
 ### Install from Release Binaries
 
-GitHub Release binaries are planned for:
+Tagged GitHub Releases attach prebuilt binaries for:
 
 | OS | Architectures | Package |
 |---|---|---|
@@ -51,7 +51,7 @@ GitHub Release binaries are planned for:
 | Linux | `amd64`, `arm64` | `.tar.gz` |
 | Windows | `amd64` | `.zip` |
 
-Homebrew and Scoop packages will be added after the first tagged release.
+Each release also includes a SHA-256 checksum file. Homebrew and Scoop packages will be added after the first tagged release.
 
 ### Build from Source
 
@@ -98,6 +98,19 @@ Current self-analysis baseline for this repository:
 | Analysis time | 1.59s |
 
 Environment: Go `1.25.0`, `darwin/amd64`.
+
+---
+
+## Release Process
+
+CI runs on Linux, macOS, and Windows for every push and pull request to `main`. Pushing a tag that starts with `v` runs the release workflow:
+
+```bash
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
+```
+
+The release workflow uses GoReleaser to build `gokg` for Linux, macOS, and Windows, inject `version`, `commit`, and `date` metadata, package archives, generate checksums, and publish a GitHub Release.
 
 ---
 

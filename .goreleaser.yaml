@@ -1,0 +1,62 @@
+version: 2
+
+project_name: gokg
+
+dist: dist
+
+builds:
+  - id: gokg
+    main: ./cmd/gokg
+    binary: gokg
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w -buildid=
+        -X github.com/hungpdn/gokg/internal/version.Version={{ .Version }}
+        -X github.com/hungpdn/gokg/internal/version.Commit={{ .Commit }}
+        -X github.com/hungpdn/gokg/internal/version.Date={{ .Date }}
+
+archives:
+  - id: release-archives
+    ids:
+      - gokg
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - docs/*
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
