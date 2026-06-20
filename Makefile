@@ -3,7 +3,11 @@
 BINARY_NAME ?= gokg
 GO ?= go
 GO_BUILD_FLAGS ?= -trimpath
-GO_LDFLAGS ?= -s -w -buildid=
+VERSION ?= dev
+COMMIT ?= none
+DATE ?= unknown
+VERSION_PKG := github.com/hungpdn/gokg/internal/version
+GO_LDFLAGS ?= -s -w -buildid= -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
 all: format test build
 

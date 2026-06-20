@@ -34,6 +34,7 @@ func TestHandleInitialize(t *testing.T) {
 	serverInfo, ok := resultMap["serverInfo"].(map[string]string)
 	assert.True(t, ok)
 	assert.Equal(t, "gokg", serverInfo["name"])
+	assert.NotEmpty(t, serverInfo["version"])
 }
 
 func TestHandleListTools(t *testing.T) {

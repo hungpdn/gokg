@@ -24,13 +24,80 @@ Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understa
 
 ## Installation
 
-This module currently targets Go `1.25.0`.
+GoKG currently targets Go `1.25.0`.
+
+### Install with Go
+
+```bash
+go install github.com/hungpdn/gokg/cmd/gokg@latest
+gokg version
+```
+
+Make sure your Go binary directory is on `PATH`. It is usually `$(go env GOPATH)/bin` or `$(go env GOBIN)` when `GOBIN` is set.
+
+After tagged releases are published, pin a specific version when you need reproducible installs:
+
+```bash
+go install github.com/hungpdn/gokg/cmd/gokg@<version>
+```
+
+### Install from Release Binaries
+
+GitHub Release binaries are planned for:
+
+| OS | Architectures | Package |
+|---|---|---|
+| macOS | `amd64`, `arm64` | `.tar.gz` |
+| Linux | `amd64`, `arm64` | `.tar.gz` |
+| Windows | `amd64` | `.zip` |
+
+Homebrew and Scoop packages will be added after the first tagged release.
+
+### Build from Source
 
 ```bash
 git clone https://github.com/hungpdn/gokg.git
 cd gokg
-go install ./cmd/gokg
+make build
+./bin/gokg version
 ```
+
+---
+
+## Quickstart
+
+```bash
+cd /path/to/your/go/project
+gokg analyze --rebuild
+gokg stats
+gokg query 'MATCH (n:FUNC) RETURN n.Name, n.PkgPath LIMIT 10'
+```
+
+GoKG expects a loadable Go module or workspace. If `go list ./...` fails for a repository, fix that first or pass `--module` explicitly when the module prefix cannot be detected.
+
+---
+
+## Technical Baseline
+
+Before a public release, the baseline check is:
+
+```bash
+go test ./...
+gokg analyze --db /tmp/gokg-public-baseline --rebuild --tests
+```
+
+On Windows, replace `/tmp/gokg-public-baseline` with a writable temporary directory.
+
+Current self-analysis baseline for this repository:
+
+| Metric | Value |
+|---|---:|
+| Nodes | 1019 |
+| Edges | 4297 |
+| Source files | 62 |
+| Analysis time | 1.59s |
+
+Environment: Go `1.25.0`, `darwin/amd64`.
 
 ---
 
@@ -53,6 +120,7 @@ gokg analyze --db .gokg/ --rebuild
 | `--workspace` | empty | Workspace name for multi-repo analysis |
 | `--rebuild` | `false` | Delete and rebuild the selected database |
 | `--gc` | `true` | Run BadgerDB value-log GC after analysis |
+| `--tests` | `false` | Include `_test.go` files in analysis |
 
 ### 2. Run the MCP Server
 
@@ -146,7 +214,7 @@ GoKG includes a lightweight Cypher subset for read-only graph exploration.
 MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
 ```
 
-**Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `VAR`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`
+**Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `CONSTANT`, `VARIABLE`, `TYPE_ALIAS`, `VAR`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`
 
 **Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`
 

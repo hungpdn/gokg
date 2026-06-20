@@ -12,6 +12,7 @@ import (
 	"github.com/hungpdn/gokg/internal/cypher"
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
+	"github.com/hungpdn/gokg/internal/version"
 )
 
 type Server struct {
@@ -81,7 +82,7 @@ func (s *Server) handleRequest(req *Request) *Response {
 		return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
-			"serverInfo":      map[string]string{"name": "gokg", "version": "0.2.0"},
+			"serverInfo":      map[string]string{"name": "gokg", "version": version.Get().Version},
 		}}
 	case "tools/list":
 		return s.handleToolsList(req)

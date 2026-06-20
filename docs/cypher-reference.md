@@ -33,6 +33,9 @@ Use node types after `:` inside parentheses: `(alias:TYPE)`.
 | `FOLDER` | Physical directory | `/home/user/repo/internal` |
 | `FUNC` | Top-level function | `github.com/org/repo/parser.ParseWorkspace` |
 | `METHOD` | Method on a type | `github.com/org/repo/*Graph.AddNode` |
+| `CONSTANT` | Package-scope constant | `github.com/org/repo/pkg.DefaultLimit` |
+| `VARIABLE` | Package-scope variable | `github.com/org/repo/pkg.cache` |
+| `TYPE_ALIAS` | Type alias or non-struct/non-interface named type | `github.com/org/repo/pkg.NodeID` |
 | `VAR` | Variable node | `github.com/org/repo/pkg.someVar` |
 | `STRUCT` | Struct type | `github.com/org/repo/graph.Graph` |
 | `INTERFACE` | Interface type | `github.com/org/repo/storage.Storage` |
