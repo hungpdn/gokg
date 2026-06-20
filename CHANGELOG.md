@@ -21,6 +21,9 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - Release builds inject version, commit, and build date metadata.
 - Documentation now includes public install, quickstart, baseline, and release process sections.
 
+### Fixed
+- Windows graph query, stats, export, and workspace load paths now avoid Badger read-only mode because Badger does not support read-only mode on Windows.
+
 ### Security
 - HTTP MCP mode is documented as local/trusted-client oriented and should not be exposed publicly without an external trusted network layer.
 

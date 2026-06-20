@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -30,8 +31,13 @@ func NewBadgerStorage(path string) (Storage, error) {
 }
 
 // NewBadgerStorageReadOnly opens an existing BadgerDB instance without taking
-// the writer role. It is intended for graph hydration/export paths.
+// the writer role. It is intended for graph hydration/export paths. Badger does
+// not support read-only mode on Windows, so Windows falls back to a normal open.
 func NewBadgerStorageReadOnly(path string) (Storage, error) {
+	if runtime.GOOS == "windows" {
+		return NewBadgerStorage(path)
+	}
+
 	opts := badgerOptions(path).WithReadOnly(true)
 	db, err := badger.Open(opts)
 	if err != nil {

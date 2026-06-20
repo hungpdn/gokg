@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -158,6 +159,10 @@ func TestBadgerStorageReadOnly(t *testing.T) {
 	assert.Equal(t, []byte("data1"), val)
 
 	err = readOnlyStore.Put(ctx, []byte("node:2"), []byte("data2"))
+	if runtime.GOOS == "windows" {
+		assert.NoError(t, err)
+		return
+	}
 	assert.Error(t, err)
 }
 
