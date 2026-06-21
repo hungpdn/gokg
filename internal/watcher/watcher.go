@@ -83,7 +83,11 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		defer w.watcher.Close()
+		defer func() {
+			if err := w.watcher.Close(); err != nil {
+				log.Printf("Watcher close error: %v", err)
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -97,7 +101,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 				if event.Has(fsnotify.Create) {
 					info, err := os.Stat(event.Name)
 					if err == nil && info.IsDir() {
-						w.watcher.Add(event.Name)
+						if err := w.watcher.Add(event.Name); err != nil {
+							log.Printf("Watcher add error for %s: %v", event.Name, err)
+						}
 						continue
 					}
 				}

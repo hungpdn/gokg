@@ -1,4 +1,4 @@
-.PHONY: all build build-debug test clean format install
+.PHONY: all build build-debug test clean format install lint
 
 BINARY_NAME ?= gokg
 GO ?= go
@@ -22,6 +22,9 @@ test:
 
 format:
 	$(GO) fmt ./...
+
+lint:
+	golangci-lint run --timeout=5m ./...
 
 clean:
 	$(GO) clean

@@ -7,26 +7,20 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 ## [Unreleased]
 
 ### Added
-- Go-native graph extraction for packages, files, folders, functions, methods, structs, interfaces, variables, constants, type aliases, channels, goroutines, boundaries, repositories, and workspaces.
-- Relationship extraction for `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
-- Strict read-only Cypher subset for graph exploration through CLI and MCP.
-- MCP server over stdio and local HTTP.
-- Multi-repo workspace support.
-- Graph export as JSON, Mermaid, and DOT.
-- Version metadata command with `gokg version` and `gokg version --json`.
-- GitHub Actions CI across Linux, macOS, and Windows.
-- GoReleaser configuration for tagged GitHub Releases.
 
 ### Changed
-- Release builds inject version, commit, and build date metadata.
-- Documentation now includes public install, quickstart, baseline, and release process sections.
 
 ### Fixed
-- Windows graph query, stats, export, and workspace load paths now avoid Badger read-only mode because Badger does not support read-only mode on Windows.
 
-### Security
-- HTTP MCP mode is documented as local/trusted-client oriented and should not be exposed publicly without an external trusted network layer.
+## [0.1.0-alpha.1]
 
-## [0.1.0-alpha.1] - Planned
+### Added
 
-Initial public alpha release.
+- **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, external boundaries, repos, and workspaces.
+- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
+- **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
+- **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` for IDEs and coding agents.
+- **Real-time incremental updates**: Optional file watcher reparses changed packages and merges updates into the live graph.
+- **Multi-repo workspaces**: Merges multiple Go repositories into one graph while storing each repo in its own BadgerDB.
+- **Graph statistics**: Reports node/edge/file counts, DB size, RAM estimate, node kinds, edge kinds, repo breakdowns, and top packages.
+- **Visual export**: Exports the graph as `json`, `mermaid`, or `dot`.

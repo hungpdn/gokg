@@ -79,7 +79,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 	return printStatsReport(out, report)
 }
 
-func loadStatsGraph(ctx context.Context, cmd *cobra.Command, dbPath string, workspaceName string) (*graph.Graph, []string, string, error) {
+func loadStatsGraph(ctx context.Context, cmd *cobra.Command, dbPath string, workspaceName string) (g *graph.Graph, dbPaths []string, source string, err error) {
 	if workspaceName != "" {
 		if cmd.Flags().Changed("db") {
 			return nil, nil, "", fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
@@ -106,9 +106,13 @@ func loadStatsGraph(ctx context.Context, cmd *cobra.Command, dbPath string, work
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to open storage: %w", err)
 	}
-	defer store.Close()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
-	g := graph.NewGraph(store)
+	g = graph.NewGraph(store)
 	if err := g.LoadFromStorage(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("failed to load graph: %w", err)
 	}

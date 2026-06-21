@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/hungpdn/gokg/internal/graph"
@@ -15,7 +14,7 @@ import (
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export the parsed graph into various formats (json, mermaid, dot)",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (err error) {
 		logOut := cmd.ErrOrStderr()
 		dataOut := cmd.OutOrStdout()
 		dbPath, _ := cmd.Flags().GetString("db")
@@ -25,25 +24,32 @@ var exportCmd = &cobra.Command{
 
 		ctx := context.Background()
 		var g *graph.Graph
-		var err error
 
 		if workspaceName != "" {
 			if cmd.Flags().Changed("db") {
 				return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
 			}
 
-			fmt.Fprintf(logOut, "Loading workspace graph from %q...\n", workspaceName)
+			if _, err := fmt.Fprintf(logOut, "Loading workspace graph from %q...\n", workspaceName); err != nil {
+				return err
+			}
 			g, err = loadWorkspaceGraph(ctx, workspaceName)
 			if err != nil {
 				return err
 			}
 		} else {
-			fmt.Fprintf(logOut, "Loading graph from %s...\n", dbPath)
+			if _, err := fmt.Fprintf(logOut, "Loading graph from %s...\n", dbPath); err != nil {
+				return err
+			}
 			store, err := storage.NewBadgerStorageReadOnly(dbPath)
 			if err != nil {
 				return fmt.Errorf("failed to open storage: %w", err)
 			}
-			defer store.Close()
+			defer func() {
+				if closeErr := store.Close(); closeErr != nil && err == nil {
+					err = closeErr
+				}
+			}()
 
 			g = graph.NewGraph(store)
 			if err := g.LoadFromStorage(ctx); err != nil {
@@ -51,7 +57,7 @@ var exportCmd = &cobra.Command{
 			}
 		}
 
-		var output io.Writer = dataOut
+		output := dataOut
 		var outputFile *os.File
 		if outFile != "" {
 			outputFile, err = os.Create(outFile)
@@ -60,7 +66,9 @@ var exportCmd = &cobra.Command{
 			}
 			defer func() {
 				if outputFile != nil {
-					_ = outputFile.Close()
+					if closeErr := outputFile.Close(); closeErr != nil && err == nil {
+						err = fmt.Errorf("failed to close output file: %w", closeErr)
+					}
 				}
 			}()
 			output = outputFile
@@ -89,7 +97,9 @@ var exportCmd = &cobra.Command{
 				return fmt.Errorf("failed to close output file: %w", err)
 			}
 			outputFile = nil
-			fmt.Fprintf(dataOut, "Exported successfully to %s\n", outFile)
+			if _, err := fmt.Fprintf(dataOut, "Exported successfully to %s\n", outFile); err != nil {
+				return err
+			}
 		}
 
 		return nil

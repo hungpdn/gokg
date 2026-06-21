@@ -113,13 +113,14 @@ func (p *Parser) parseMatch() (*MatchClause, error) {
 			p.nextToken()
 		} else {
 			// currently pointing forward, so next should be -> or -
-			if p.curToken.Type == TokenRightArrow {
+			switch p.curToken.Type {
+			case TokenRightArrow:
 				edgePattern.Direction = DirOutbound
 				p.nextToken()
-			} else if p.curToken.Type == TokenDash {
+			case TokenDash:
 				edgePattern.Direction = DirAny
 				p.nextToken()
-			} else {
+			default:
 				return nil, fmt.Errorf("expected -> or - after edge body, got %v", p.curToken.Literal)
 			}
 		}

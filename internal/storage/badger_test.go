@@ -15,7 +15,7 @@ func TestBadgerStorage(t *testing.T) {
 	// Initialize the storage
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	ctx := context.Background()
 	key := []byte("test-key")
@@ -49,7 +49,7 @@ func TestBadgerStorageContextCancel(t *testing.T) {
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -66,13 +66,13 @@ func TestBadgerStorageIterate(t *testing.T) {
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	ctx := context.Background()
 
-	_ = store.Put(ctx, []byte("node:1"), []byte("data1"))
-	_ = store.Put(ctx, []byte("node:2"), []byte("data2"))
-	_ = store.Put(ctx, []byte("edge:1"), []byte("data3"))
+	require.NoError(t, store.Put(ctx, []byte("node:1"), []byte("data1")))
+	require.NoError(t, store.Put(ctx, []byte("node:2"), []byte("data2")))
+	require.NoError(t, store.Put(ctx, []byte("edge:1"), []byte("data3")))
 
 	count := 0
 	err = store.Iterate(ctx, func(key []byte, value []byte) error {
@@ -88,7 +88,7 @@ func TestBadgerStoragePutBatch(t *testing.T) {
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	ctx := context.Background()
 	batchStore := store.(BatchPutter)
@@ -115,7 +115,7 @@ func TestBadgerStorageIteratePrefix(t *testing.T) {
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	ctx := context.Background()
 
@@ -152,7 +152,7 @@ func TestBadgerStorageReadOnly(t *testing.T) {
 
 	readOnlyStore, err := NewBadgerStorageReadOnly(dir)
 	require.NoError(t, err)
-	defer readOnlyStore.Close()
+	defer closeTestStore(t, readOnlyStore)
 
 	val, err := readOnlyStore.Get(ctx, []byte("node:1"))
 	require.NoError(t, err)
@@ -184,11 +184,17 @@ func TestBadgerStorageValueLogGCNoRewrite(t *testing.T) {
 
 	store, err := NewBadgerStorage(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	gcStore, ok := store.(ValueLogGCer)
 	require.True(t, ok)
 
 	err = gcStore.RunValueLogGC(context.Background(), 0.5)
 	require.NoError(t, err)
+}
+
+func closeTestStore(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.Close())
 }

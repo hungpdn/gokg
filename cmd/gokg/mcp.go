@@ -73,14 +73,18 @@ var mcpCmd = &cobra.Command{
 					}
 					repoID := repo.ID
 					dbPath := ws.GetRepoDBPath(repoID)
-					w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
+					w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) (err error) {
 						store, err := openWatchStorage(ctx, dbPath)
 						if err != nil {
 							return fmt.Errorf("open watch storage for repo %q: %w", repoID, err)
 						}
 						g.SetRepoStore(repoID, store)
 						defer g.SetRepoStore(repoID, nil)
-						defer store.Close()
+						defer func() {
+							if closeErr := store.Close(); closeErr != nil && err == nil {
+								err = closeErr
+							}
+						}()
 
 						return update(ctx)
 					})
@@ -116,7 +120,9 @@ var mcpCmd = &cobra.Command{
 
 		g := graph.NewGraph(store)
 		if err := g.LoadFromStorage(ctx); err != nil {
-			_ = store.Close()
+			if closeErr := store.Close(); closeErr != nil {
+				return fmt.Errorf("failed to load graph from storage: %w; additionally failed to close storage: %v", err, closeErr)
+			}
 			return fmt.Errorf("failed to load graph from storage: %w", err)
 		}
 		if err := store.Close(); err != nil {
@@ -130,14 +136,18 @@ var mcpCmd = &cobra.Command{
 			if err != nil {
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
 			} else {
-				w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) error {
+				w.SetUpdateRunner(func(ctx context.Context, update func(context.Context) error) (err error) {
 					store, err := openWatchStorage(ctx, dbPath)
 					if err != nil {
 						return fmt.Errorf("open watch storage: %w", err)
 					}
 					g.SetStore(store)
 					defer g.SetStore(nil)
-					defer store.Close()
+					defer func() {
+						if closeErr := store.Close(); closeErr != nil && err == nil {
+							err = closeErr
+						}
+					}()
 
 					return update(ctx)
 				})
@@ -168,7 +178,9 @@ func startMCPTransport(ctx context.Context, cmd *cobra.Command, server *mcp.Serv
 	if !httpMode {
 		return server.Start(ctx)
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "HTTP MCP server listening at %s\n", mcpHTTPURL(httpAddr, httpPath))
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "HTTP MCP server listening at %s\n", mcpHTTPURL(httpAddr, httpPath)); err != nil {
+		return err
+	}
 	return server.StartHTTP(ctx, httpAddr, httpPath)
 }
 

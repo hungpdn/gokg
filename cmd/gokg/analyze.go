@@ -40,9 +40,11 @@ func newAnalyzeCommand() *cobra.Command {
 	return cmd
 }
 
-func runAnalyze(cmd *cobra.Command, args []string) error {
+func runAnalyze(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "Starting analysis...")
+	if _, err := fmt.Fprintln(out, "Starting analysis..."); err != nil {
+		return err
+	}
 	startedAt := time.Now()
 	ctx := context.Background()
 
@@ -69,7 +71,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if err := rebuildBadgerDBPath(dbPath, cmd.Flags().Changed("db")); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Rebuilding local database at %s...\n", dbPath)
+		if _, err := fmt.Fprintf(out, "Rebuilding local database at %s...\n", dbPath); err != nil {
+			return err
+		}
 	}
 
 	// Init Storage
@@ -77,7 +81,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open storage: %w", err)
 	}
-	defer store.Close()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	modulePrefix, _ := cmd.Flags().GetString("module")
 	if modulePrefix == "" {
@@ -90,7 +98,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Parse Workspace
 	p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
 	if filepath.Clean(analysisRoot.Dir) != filepath.Clean(dir) {
-		fmt.Fprintf(out, "Analyzing Go module at %s\n", analysisRoot.Dir)
+		if _, err := fmt.Fprintf(out, "Analyzing Go module at %s\n", analysisRoot.Dir); err != nil {
+			return err
+		}
 	}
 	result, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
@@ -115,8 +125,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err := printAnalyzeGraphSummary(out, "Graph Summary", g.Stats(), dbPath, time.Since(startedAt)); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Analysis complete.")
-	return nil
+	_, err = fmt.Fprintln(out, "Analysis complete.")
+	return err
 }
 
 type workspaceAnalysisResult struct {
@@ -152,7 +162,9 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	runGC, _ := cmd.Flags().GetBool("gc")
 	includeTests, _ := cmd.Flags().GetBool("tests")
 
-	fmt.Fprintf(out, "Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos))
+	if _, err := fmt.Fprintf(out, "Starting workspace analysis for %q (%d repos)...\n", ws.Name, len(repos)); err != nil {
+		return err
+	}
 
 	var mu sync.Mutex
 	results := make([]workspaceAnalysisResult, 0, len(repos))
@@ -182,8 +194,8 @@ func runAnalyzeWorkspace(cmd *cobra.Command, ctx context.Context, workspaceName 
 	if err := printWorkspaceAnalyzeSummary(out, ws.Name, results, time.Since(startedAt)); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Workspace analysis complete.")
-	return nil
+	_, err = fmt.Fprintln(out, "Workspace analysis complete.")
+	return err
 }
 
 func analyzeWorkspaceRepo(
@@ -193,7 +205,7 @@ func analyzeWorkspaceRepo(
 	rebuild bool,
 	runGC bool,
 	includeTests bool,
-) (workspaceAnalysisResult, error) {
+) (result workspaceAnalysisResult, err error) {
 	startedAt := time.Now()
 
 	stat, err := os.Stat(repo.Path)
@@ -219,7 +231,11 @@ func analyzeWorkspaceRepo(
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("failed to open storage for repo %q: %w", repo.ID, err)
 	}
-	defer store.Close()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	modulePrefix := analysisRoot.ModulePrefix
 	if modulePrefix == "" {
@@ -227,13 +243,13 @@ func analyzeWorkspaceRepo(
 	}
 
 	p := parser.NewWorkspaceParser(modulePrefix, repo.ID, ws.Name).WithTests(includeTests)
-	result, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
+	parseResult, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("parse repo %q failed: %w", repo.ID, err)
 	}
 
 	g := graph.NewGraph(store)
-	if err := g.BuildFromParseResult(ctx, result); err != nil {
+	if err := g.BuildFromParseResult(ctx, parseResult); err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("graph construction for repo %q failed: %w", repo.ID, err)
 	}
 

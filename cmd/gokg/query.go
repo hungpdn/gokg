@@ -19,12 +19,14 @@ func newQueryCommand() *cobra.Command {
 		Use:   "query <cypher-string>",
 		Short: "Execute a Cypher query against the knowledge graph",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			queryString := args[0]
 			ctx := context.Background()
 			logOut := cmd.ErrOrStderr()
 
-			fmt.Fprintln(logOut, "Parsing query...")
+			if _, err := fmt.Fprintln(logOut, "Parsing query..."); err != nil {
+				return err
+			}
 			q, err := cypher.NewParser(cypher.NewLexer(queryString)).ParseQuery()
 			if err != nil {
 				return fmt.Errorf("failed to parse cypher: %w", err)
@@ -40,28 +42,40 @@ func newQueryCommand() *cobra.Command {
 					return fmt.Errorf("--db cannot be used with --workspace; workspace mode loads per-repo databases")
 				}
 
-				fmt.Fprintf(logOut, "Loading workspace graph from %q...\n", workspaceName)
+				if _, err := fmt.Fprintf(logOut, "Loading workspace graph from %q...\n", workspaceName); err != nil {
+					return err
+				}
 				g, err = loadWorkspaceGraph(ctx, workspaceName)
 				if err != nil {
 					return err
 				}
 			} else {
-				fmt.Fprintf(logOut, "Loading graph from %s...\n", dbPath)
+				if _, err := fmt.Fprintf(logOut, "Loading graph from %s...\n", dbPath); err != nil {
+					return err
+				}
 				store, err := storage.NewBadgerStorageReadOnly(dbPath)
 				if err != nil {
 					return fmt.Errorf("failed to open storage: %w", err)
 				}
-				defer store.Close()
+				defer func() {
+					if closeErr := store.Close(); closeErr != nil && err == nil {
+						err = closeErr
+					}
+				}()
 
 				g = graph.NewGraph(store)
 				if err := g.LoadFromStorage(ctx); err != nil {
 					return fmt.Errorf("failed to load graph: %w", err)
 				}
 			}
-			fmt.Fprintf(logOut, "Graph loaded in %v.\n", time.Since(start))
+			if _, err := fmt.Fprintf(logOut, "Graph loaded in %v.\n", time.Since(start)); err != nil {
+				return err
+			}
 
 			qb := g.Query()
-			fmt.Fprintln(logOut, "Executing query...")
+			if _, err := fmt.Fprintln(logOut, "Executing query..."); err != nil {
+				return err
+			}
 			start = time.Now()
 
 			results, err := qb.ExecuteCypher(q)
@@ -69,7 +83,9 @@ func newQueryCommand() *cobra.Command {
 				return fmt.Errorf("execution error: %w", err)
 			}
 
-			fmt.Fprintf(logOut, "Query completed in %v. Found %d row(s).\n\n", time.Since(start), len(results))
+			if _, err := fmt.Fprintf(logOut, "Query completed in %v. Found %d row(s).\n\n", time.Since(start), len(results)); err != nil {
+				return err
+			}
 
 			encoder := json.NewEncoder(cmd.OutOrStdout())
 			encoder.SetIndent("", "  ")

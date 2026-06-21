@@ -86,14 +86,16 @@ func TestExportDot(t *testing.T) {
 	n2.ID = "B"
 	n2.Name = "B"
 
-	_, _ = g.AddNode(ctx, n1)
-	_, _ = g.AddNode(ctx, n2)
+	_, err := g.AddNode(ctx, n1)
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, n2)
+	require.NoError(t, err)
 
 	e := parser.NewEdge()
 	e.From = "A"
 	e.To = "B"
 	e.Type = parser.EdgeTypeCalls
-	_ = g.AddEdge(ctx, e)
+	require.NoError(t, g.AddEdge(ctx, e))
 
 	dot := g.ExportDot()
 	assert.Contains(t, dot, "digraph G {")
@@ -133,7 +135,8 @@ func TestExportJSON(t *testing.T) {
 	n1.ID = "A"
 	n1.Name = "A"
 
-	_, _ = g.AddNode(ctx, n1)
+	_, err := g.AddNode(ctx, n1)
+	require.NoError(t, err)
 
 	js, err := g.ExportJSON()
 	require.NoError(t, err)

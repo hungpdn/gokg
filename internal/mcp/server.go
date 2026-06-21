@@ -435,7 +435,7 @@ func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResul
 
 	b.WriteString(fmt.Sprintf("Path length: **%d** hop(s)\n\n", len(pathResults)-1))
 	for i, pr := range pathResults {
-		prefix := "  "
+		var prefix string
 		if i == 0 {
 			prefix = "▶ "
 		} else if i == len(pathResults)-1 {
@@ -484,14 +484,6 @@ func (s *Server) textResult(id interface{}, text string) *Response {
 
 func (s *Server) errorResult(id interface{}, err error) *Response {
 	return &Response{ID: id, JSONRPC: "2.0", Error: &Error{Code: -32000, Message: err.Error()}}
-}
-
-func (s *Server) sendResponse(res *Response) {
-	_ = writeResponse(os.Stdout, res)
-}
-
-func (s *Server) sendError(id interface{}, code int, message string) {
-	_ = writeError(os.Stdout, id, code, message)
 }
 
 func writeError(out io.Writer, id interface{}, code int, message string) error {

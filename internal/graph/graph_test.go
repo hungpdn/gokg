@@ -414,10 +414,10 @@ func TestLoadFromStoragesResolvesPersistedCrossRepoEdges(t *testing.T) {
 	ctx := context.Background()
 	storeA, err := storage.NewBadgerStorage(t.TempDir())
 	require.NoError(t, err)
-	defer storeA.Close()
+	defer closeTestStore(t, storeA)
 	storeB, err := storage.NewBadgerStorage(t.TempDir())
 	require.NoError(t, err)
-	defer storeB.Close()
+	defer closeTestStore(t, storeB)
 
 	repoA := &parser.ParseResult{
 		Nodes: []*parser.Node{
@@ -449,7 +449,7 @@ func TestPersistedEdgeKeysDoNotCollideWithColonIDs(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.NewBadgerStorage(t.TempDir())
 	require.NoError(t, err)
-	defer store.Close()
+	defer closeTestStore(t, store)
 
 	edgeA := &parser.Edge{From: "a:b", To: "c", Type: parser.EdgeTypeCalls}
 	edgeB := &parser.Edge{From: "a", To: "b:c", Type: parser.EdgeTypeCalls}
@@ -520,10 +520,10 @@ func TestGraphPersistsToRepoStores(t *testing.T) {
 	ctx := context.Background()
 	storeA, err := storage.NewBadgerStorage(t.TempDir())
 	require.NoError(t, err)
-	defer storeA.Close()
+	defer closeTestStore(t, storeA)
 	storeB, err := storage.NewBadgerStorage(t.TempDir())
 	require.NoError(t, err)
-	defer storeB.Close()
+	defer closeTestStore(t, storeB)
 
 	g := NewGraph(nil)
 	g.SetRepoStore("service-a", storeA)
@@ -619,6 +619,12 @@ func hasConcurrencyConnection(connections []ConcurrencyConnection, nodeID string
 		}
 	}
 	return false
+}
+
+func closeTestStore(t *testing.T, store storage.Storage) {
+	t.Helper()
+
+	require.NoError(t, store.Close())
 }
 
 func graphNodeIDs(nodes []*parser.Node) []string {

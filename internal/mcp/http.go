@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -41,7 +42,9 @@ func (s *Server) StartHTTP(ctx context.Context, addr string, path string) error 
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 			defer cancel()
-			_ = server.Shutdown(shutdownCtx)
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				log.Printf("HTTP MCP shutdown error: %v", err)
+			}
 		case <-done:
 		}
 	}()
@@ -75,7 +78,11 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		writeHTTPError(w, nil, -32600, "MCP HTTP endpoint accepts POST requests", http.StatusMethodNotAllowed)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			return
+		}
+	}()
 
 	var req Request
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxHTTPBodyBytes))
@@ -139,7 +146,9 @@ func writeHTTPError(w http.ResponseWriter, id interface{}, code int, message str
 func writeHTTPJSON(w http.ResponseWriter, status int, value interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		return
+	}
 }
 
 func normalizeHTTPPath(path string) string {

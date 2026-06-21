@@ -154,7 +154,8 @@ func (qb *QueryBuilder) GetConcurrencyGraph(nodeID string) ([]ConcurrencyConnect
 			if edge == nil {
 				continue
 			}
-			if !isConcurrencyEdge(edge.Type) && !(edge.Type == parser.EdgeTypeCalls && pNode.Type == parser.NodeTypeGoroutine) {
+			isGoroutineCall := edge.Type == parser.EdgeTypeCalls && pNode.Type == parser.NodeTypeGoroutine
+			if !isConcurrencyEdge(edge.Type) && !isGoroutineCall {
 				continue
 			}
 
@@ -269,7 +270,7 @@ func (qb *QueryBuilder) GetImplementations(interfaceID string) ([]*parser.Node, 
 }
 
 // GetSourceCode reads the source code of the given node from disk.
-func (qb *QueryBuilder) GetSourceCode(nodeID string) (string, error) {
+func (qb *QueryBuilder) GetSourceCode(nodeID string) (code string, err error) {
 	qb.g.mu.RLock()
 
 	numID, exists := qb.g.nodeMap[nodeID]
@@ -300,7 +301,11 @@ func (qb *QueryBuilder) GetSourceCode(nodeID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", filePath, closeErr)
+		}
+	}()
 
 	var b strings.Builder
 	scanner := bufio.NewScanner(f)

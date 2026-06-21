@@ -139,8 +139,8 @@ func TestRemoveRepo(t *testing.T) {
 	ws, err := Init("remove-test")
 	require.NoError(t, err)
 
-	_ = ws.AddRepo("repo-a", "/a")
-	_ = ws.AddRepo("repo-b", "/b")
+	require.NoError(t, ws.AddRepo("repo-a", "/a"))
+	require.NoError(t, ws.AddRepo("repo-b", "/b"))
 	assert.Len(t, ws.Config.Repos, 2)
 
 	repoADBPath := ws.GetRepoDBPath("repo-a")
@@ -157,8 +157,10 @@ func TestRemoveRepo(t *testing.T) {
 func TestListWorkspaces(t *testing.T) {
 	setTestHome(t)
 
-	_, _ = Init("ws-alpha")
-	_, _ = Init("ws-beta")
+	_, err := Init("ws-alpha")
+	require.NoError(t, err)
+	_, err = Init("ws-beta")
+	require.NoError(t, err)
 
 	names, err := List()
 	require.NoError(t, err)

@@ -12,23 +12,28 @@ import (
 
 func TestExecuteCypher(t *testing.T) {
 	g := NewGraph(nil)
+	ctx := context.Background()
 
 	n1 := &parser.Node{ID: "funcA", Type: parser.NodeTypeFunc, Name: "A", PkgPath: "example/parser", RepoID: "repo-a"}
 	n2 := &parser.Node{ID: "funcB", Type: parser.NodeTypeFunc, Name: "B", PkgPath: "example/graph", RepoID: "repo-a"}
 	n3 := &parser.Node{ID: "structX", Type: parser.NodeTypeStruct, Name: "X", RepoID: "repo-a"}
 
-	_, _ = g.AddNode(context.Background(), n1)
-	_, _ = g.AddNode(context.Background(), n2)
-	_, _ = g.AddNode(context.Background(), n3)
+	_, err := g.AddNode(ctx, n1)
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, n2)
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, n3)
+	require.NoError(t, err)
 
-	_ = g.AddEdge(context.Background(), &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeCalls})
-	_ = g.AddEdge(context.Background(), &parser.Edge{From: "funcB", To: "structX", Type: parser.EdgeTypeContains})
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "funcB", To: "structX", Type: parser.EdgeTypeContains}))
 
 	qb := g.Query()
 
 	t.Run("Match All Funcs", func(t *testing.T) {
 		input := `MATCH (n:FUNC) RETURN n.Name`
-		q, _ := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		require.NoError(t, err)
 
 		res, err := qb.ExecuteCypher(q)
 		require.NoError(t, err)
@@ -37,7 +42,8 @@ func TestExecuteCypher(t *testing.T) {
 
 	t.Run("Match Node Where", func(t *testing.T) {
 		input := `MATCH (n:FUNC) WHERE n.Name = "A" RETURN n`
-		q, _ := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		require.NoError(t, err)
 
 		res, err := qb.ExecuteCypher(q)
 		require.NoError(t, err)
@@ -50,7 +56,8 @@ func TestExecuteCypher(t *testing.T) {
 
 	t.Run("Match Edges", func(t *testing.T) {
 		input := `MATCH (a:FUNC)-[r:CALLS]->(b:FUNC) RETURN a.Name, b.Name`
-		q, _ := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		require.NoError(t, err)
 
 		res, err := qb.ExecuteCypher(q)
 		require.NoError(t, err)
@@ -62,7 +69,8 @@ func TestExecuteCypher(t *testing.T) {
 
 	t.Run("Match Any Direction", func(t *testing.T) {
 		input := `MATCH (a)-[r]-(b) WHERE a.Name = "B" RETURN b.Name`
-		q, _ := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()
+		require.NoError(t, err)
 
 		res, err := qb.ExecuteCypher(q)
 		require.NoError(t, err)
@@ -143,13 +151,16 @@ func TestExecuteCypher(t *testing.T) {
 
 func TestExecuteCypher_EdgeWhereChecksAllEdgesBetweenPair(t *testing.T) {
 	g := NewGraph(nil)
+	ctx := context.Background()
 	n1 := &parser.Node{ID: "funcA", Type: parser.NodeTypeFunc, Name: "A"}
 	n2 := &parser.Node{ID: "funcB", Type: parser.NodeTypeFunc, Name: "B"}
 
-	_, _ = g.AddNode(context.Background(), n1)
-	_, _ = g.AddNode(context.Background(), n2)
-	_ = g.AddEdge(context.Background(), &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeCalls})
-	_ = g.AddEdge(context.Background(), &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeImports})
+	_, err := g.AddNode(ctx, n1)
+	require.NoError(t, err)
+	_, err = g.AddNode(ctx, n2)
+	require.NoError(t, err)
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeCalls}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "funcA", To: "funcB", Type: parser.EdgeTypeImports}))
 
 	input := `MATCH (a:FUNC)-[r]->(b:FUNC) WHERE r.Type = "IMPORTS" RETURN r.Type`
 	q, err := cypher.NewParser(cypher.NewLexer(input)).ParseQuery()

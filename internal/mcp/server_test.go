@@ -37,6 +37,19 @@ func TestHandleInitialize(t *testing.T) {
 	assert.NotEmpty(t, serverInfo["version"])
 }
 
+func requireAddNode(t *testing.T, g *graph.Graph, ctx context.Context, node *parser.Node) {
+	t.Helper()
+
+	_, err := g.AddNode(ctx, node)
+	require.NoError(t, err)
+}
+
+func requireAddEdge(t *testing.T, g *graph.Graph, ctx context.Context, edge *parser.Edge) {
+	t.Helper()
+
+	require.NoError(t, g.AddEdge(ctx, edge))
+}
+
 func TestHandleListTools(t *testing.T) {
 	g := graph.NewGraph(nil)
 	server := NewServer(g)
@@ -94,11 +107,11 @@ func TestHandleCallDependenciesMarkdown(t *testing.T) {
 
 	n1 := &parser.Node{ID: "pkg.A", Type: parser.NodeTypeFunc, Name: "FuncA", PkgPath: "pkg"}
 	n2 := &parser.Node{ID: "pkg.B", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkg"}
-	_, _ = g.AddNode(ctx, n1)
-	_, _ = g.AddNode(ctx, n2)
+	requireAddNode(t, g, ctx, n1)
+	requireAddNode(t, g, ctx, n2)
 
 	e := &parser.Edge{From: "pkg.A", To: "pkg.B", Type: parser.EdgeTypeCalls}
-	_ = g.AddEdge(ctx, e)
+	requireAddEdge(t, g, ctx, e)
 
 	server := NewServer(g)
 
@@ -126,11 +139,11 @@ func TestHandleCallGetImplementations(t *testing.T) {
 
 	iface := &parser.Node{ID: "pkg.MyInterface", Type: parser.NodeTypeInterface, Name: "MyInterface", PkgPath: "pkg"}
 	strct := &parser.Node{ID: "pkg.MyStruct", Type: parser.NodeTypeStruct, Name: "MyStruct", PkgPath: "pkg"}
-	_, _ = g.AddNode(ctx, iface)
-	_, _ = g.AddNode(ctx, strct)
+	requireAddNode(t, g, ctx, iface)
+	requireAddNode(t, g, ctx, strct)
 
 	e := &parser.Edge{From: "pkg.MyStruct", To: "pkg.MyInterface", Type: parser.EdgeTypeImplements}
-	_ = g.AddEdge(ctx, e)
+	requireAddEdge(t, g, ctx, e)
 
 	server := NewServer(g)
 
@@ -156,12 +169,12 @@ func TestHandleCallFindPath(t *testing.T) {
 	n1 := &parser.Node{ID: "A", Type: parser.NodeTypeFunc, Name: "FuncA"}
 	n2 := &parser.Node{ID: "B", Type: parser.NodeTypeFunc, Name: "FuncB"}
 	n3 := &parser.Node{ID: "C", Type: parser.NodeTypeFunc, Name: "FuncC"}
-	_, _ = g.AddNode(ctx, n1)
-	_, _ = g.AddNode(ctx, n2)
-	_, _ = g.AddNode(ctx, n3)
+	requireAddNode(t, g, ctx, n1)
+	requireAddNode(t, g, ctx, n2)
+	requireAddNode(t, g, ctx, n3)
 
-	_ = g.AddEdge(ctx, &parser.Edge{From: "A", To: "B", Type: parser.EdgeTypeCalls})
-	_ = g.AddEdge(ctx, &parser.Edge{From: "B", To: "C", Type: parser.EdgeTypeCalls})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "A", To: "B", Type: parser.EdgeTypeCalls})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "B", To: "C", Type: parser.EdgeTypeCalls})
 
 	server := NewServer(g)
 
@@ -190,13 +203,13 @@ func TestHandleCallGetConcurrencyGraph(t *testing.T) {
 	funcB := &parser.Node{ID: "pkg.B", Type: parser.NodeTypeFunc, Name: "FuncB", PkgPath: "pkg"}
 	gr := &parser.Node{ID: "pkg.A.goroutine_L12", Type: parser.NodeTypeGoroutine, Name: "goroutine_L12", PkgPath: "pkg"}
 	ch := &parser.Node{ID: "pkg.A.ch", Type: parser.NodeTypeChannel, Name: "ch (chan int)", PkgPath: "pkg"}
-	_, _ = g.AddNode(ctx, funcA)
-	_, _ = g.AddNode(ctx, funcB)
-	_, _ = g.AddNode(ctx, gr)
-	_, _ = g.AddNode(ctx, ch)
-	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.goroutine_L12", Type: parser.EdgeTypeSpawns})
-	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A.goroutine_L12", To: "pkg.B", Type: parser.EdgeTypeCalls})
-	_ = g.AddEdge(ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.ch", Type: parser.EdgeTypeSendsTo})
+	requireAddNode(t, g, ctx, funcA)
+	requireAddNode(t, g, ctx, funcB)
+	requireAddNode(t, g, ctx, gr)
+	requireAddNode(t, g, ctx, ch)
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.goroutine_L12", Type: parser.EdgeTypeSpawns})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "pkg.A.goroutine_L12", To: "pkg.B", Type: parser.EdgeTypeCalls})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "pkg.A", To: "pkg.A.ch", Type: parser.EdgeTypeSendsTo})
 
 	server := NewServer(g)
 

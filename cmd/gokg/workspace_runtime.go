@@ -27,7 +27,7 @@ func sortedWorkspaceRepos(ws *workspace.Workspace) []workspaceRepo {
 	return repos
 }
 
-func loadWorkspaceGraph(ctx context.Context, workspaceName string) (*graph.Graph, error) {
+func loadWorkspaceGraph(ctx context.Context, workspaceName string) (g *graph.Graph, err error) {
 	ws, err := workspace.Load(workspaceName)
 	if err != nil {
 		return nil, err
@@ -37,9 +37,13 @@ func loadWorkspaceGraph(ctx context.Context, workspaceName string) (*graph.Graph
 	if err != nil {
 		return nil, err
 	}
-	defer closeStores(stores)
+	defer func() {
+		if closeErr := closeStores(stores); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
-	g := graph.NewGraph(nil)
+	g = graph.NewGraph(nil)
 	if err := g.LoadFromStorages(ctx, stores...); err != nil {
 		return nil, err
 	}
@@ -57,16 +61,24 @@ func openWorkspaceStores(ws *workspace.Workspace, readOnly bool) ([]storage.Stor
 	for _, repo := range repos {
 		dbPath := ws.GetRepoDBPath(repo.ID)
 		if _, err := os.Stat(dbPath); err != nil {
-			_ = closeStores(stores)
+			closeErr := closeStores(stores)
 			if os.IsNotExist(err) {
+				if closeErr != nil {
+					return nil, fmt.Errorf("repo %q has no database at %s; run gokg analyze --workspace %s first; additionally failed to close opened stores: %v", repo.ID, dbPath, ws.Name, closeErr)
+				}
 				return nil, fmt.Errorf("repo %q has no database at %s; run gokg analyze --workspace %s first", repo.ID, dbPath, ws.Name)
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("failed to inspect database for repo %q: %w; additionally failed to close opened stores: %v", repo.ID, err, closeErr)
 			}
 			return nil, fmt.Errorf("failed to inspect database for repo %q: %w", repo.ID, err)
 		}
 
 		store, err := openWorkspaceStore(dbPath, readOnly)
 		if err != nil {
-			_ = closeStores(stores)
+			if closeErr := closeStores(stores); closeErr != nil {
+				return nil, fmt.Errorf("failed to open database for repo %q: %w; additionally failed to close opened stores: %v", repo.ID, err, closeErr)
+			}
 			return nil, fmt.Errorf("failed to open database for repo %q: %w", repo.ID, err)
 		}
 		stores = append(stores, store)

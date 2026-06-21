@@ -69,7 +69,7 @@ func TestWatcher_DebounceAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer w.watcher.Close()
+	defer closeTestWatcher(t, w)
 
 	// override delay for fast test
 	w.mu.Lock()
@@ -143,7 +143,7 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	if err := w.Start(ctx); err != nil {
 		t.Fatalf("expected no error from Start, got %v", err)
 	}
-	defer w.watcher.Close()
+	defer closeTestWatcher(t, w)
 
 	// give watcher a moment to start and add directories
 	time.Sleep(50 * time.Millisecond)
@@ -157,7 +157,7 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	if _, err := f.WriteString("\n// modified\n"); err != nil {
 		t.Fatalf("failed to append to main.go: %v", err)
 	}
-	f.Close()
+	requireNoError(t, f.Close())
 
 	c := make(chan struct{})
 	go func() {
@@ -198,7 +198,7 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	p := parser.NewParser("testmodule", "testmodule")
 	w, err := NewWatcher(g, p, dir)
 	requireNoError(t, err)
-	defer w.watcher.Close()
+	defer closeTestWatcher(t, w)
 
 	called := false
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
@@ -222,4 +222,10 @@ func requireNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+}
+
+func closeTestWatcher(t *testing.T, w *Watcher) {
+	t.Helper()
+
+	requireNoError(t, w.watcher.Close())
 }

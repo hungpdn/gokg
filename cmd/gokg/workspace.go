@@ -25,8 +25,8 @@ var workspaceInitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Workspace %q created at %s\n", name, ws.Dir)
-		return nil
+		_, err = fmt.Fprintf(out, "Workspace %q created at %s\n", name, ws.Dir)
+		return err
 	},
 }
 
@@ -72,8 +72,8 @@ var workspaceAddCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(out, "Added repo %q (%s) to workspace %q\n", repoID, analysisRoot.Dir, wsName)
-		return nil
+		_, err = fmt.Fprintf(out, "Added repo %q (%s) to workspace %q\n", repoID, analysisRoot.Dir, wsName)
+		return err
 	},
 }
 
@@ -87,17 +87,23 @@ var workspaceListCmd = &cobra.Command{
 			return err
 		}
 		if len(names) == 0 {
-			fmt.Fprintln(out, "No workspaces found.")
-			return nil
+			_, err = fmt.Fprintln(out, "No workspaces found.")
+			return err
 		}
-		fmt.Fprintln(out, "Workspaces:")
+		if _, err := fmt.Fprintln(out, "Workspaces:"); err != nil {
+			return err
+		}
 		for _, name := range names {
 			ws, err := workspace.Load(name)
 			if err != nil {
-				fmt.Fprintf(out, "  - %s (error: %v)\n", name, err)
+				if _, writeErr := fmt.Fprintf(out, "  - %s (error: %v)\n", name, err); writeErr != nil {
+					return writeErr
+				}
 				continue
 			}
-			fmt.Fprintf(out, "  - %s (%d repos)\n", name, len(ws.Config.Repos))
+			if _, err := fmt.Fprintf(out, "  - %s (%d repos)\n", name, len(ws.Config.Repos)); err != nil {
+				return err
+			}
 		}
 		return nil
 	},
@@ -115,11 +121,19 @@ var workspaceShowCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(out, "Workspace: %s\n", ws.Name)
-		fmt.Fprintf(out, "Directory: %s\n", ws.Dir)
-		fmt.Fprintf(out, "Repos (%d):\n", len(ws.Config.Repos))
+		if _, err := fmt.Fprintf(out, "Workspace: %s\n", ws.Name); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "Directory: %s\n", ws.Dir); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "Repos (%d):\n", len(ws.Config.Repos)); err != nil {
+			return err
+		}
 		for _, repo := range sortedWorkspaceRepos(ws) {
-			fmt.Fprintf(out, "  - %s -> %s\n", repo.ID, repo.Path)
+			if _, err := fmt.Fprintf(out, "  - %s -> %s\n", repo.ID, repo.Path); err != nil {
+				return err
+			}
 		}
 		return nil
 	},
@@ -143,8 +157,8 @@ var workspaceRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(out, "Removed repo %q from workspace %q\n", repoID, wsName)
-		return nil
+		_, err = fmt.Fprintf(out, "Removed repo %q from workspace %q\n", repoID, wsName)
+		return err
 	},
 }
 
