@@ -370,20 +370,20 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 
 func formatNodeListMarkdown(title, nodeID string, nodes []*parser.Node) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("## %s of `%s`\n\n", title, nodeID))
+	fmt.Fprintf(&b, "## %s of `%s`\n\n", title, nodeID)
 
 	if len(nodes) == 0 {
 		b.WriteString("_No results found._\n")
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("Found **%d** node(s):\n\n", len(nodes)))
+	fmt.Fprintf(&b, "Found **%d** node(s):\n\n", len(nodes))
 	for _, n := range nodes {
-		b.WriteString(fmt.Sprintf("- **`%s`** (`%s`) — ID: `%s`", n.Name, n.Type, n.ID))
+		fmt.Fprintf(&b, "- **`%s`** (`%s`) — ID: `%s`", n.Name, n.Type, n.ID)
 		if n.FilePath != "" && n.Lines[0] > 0 {
-			b.WriteString(fmt.Sprintf(" — `%s` L%d-%d", n.FilePath, n.Lines[0], n.Lines[1]))
+			fmt.Fprintf(&b, " — `%s` L%d-%d", n.FilePath, n.Lines[0], n.Lines[1])
 		} else if n.PkgPath != "" {
-			b.WriteString(fmt.Sprintf(" — pkg: `%s`", n.PkgPath))
+			fmt.Fprintf(&b, " — pkg: `%s`", n.PkgPath)
 		}
 		b.WriteByte('\n')
 	}
@@ -392,23 +392,23 @@ func formatNodeListMarkdown(title, nodeID string, nodes []*parser.Node) string {
 
 func formatConcurrencyGraphMarkdown(nodeID string, connections []graph.ConcurrencyConnection) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("## Concurrency Graph of `%s`\n\n", nodeID))
+	fmt.Fprintf(&b, "## Concurrency Graph of `%s`\n\n", nodeID)
 
 	if len(connections) == 0 {
 		b.WriteString("_No concurrency nodes found._\n")
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("Found **%d** connection(s):\n\n", len(connections)))
+	fmt.Fprintf(&b, "Found **%d** connection(s):\n\n", len(connections))
 	for _, conn := range connections {
 		if conn.Node == nil || conn.Edge == nil {
 			continue
 		}
 
 		if conn.Direction == "inbound" {
-			b.WriteString(fmt.Sprintf("- **`%s`** (`%s`) --_%s_--> `%s`\n", conn.Node.Name, conn.Node.Type, conn.Edge.Type, nodeID))
+			fmt.Fprintf(&b, "- **`%s`** (`%s`) --_%s_--> `%s`\n", conn.Node.Name, conn.Node.Type, conn.Edge.Type, nodeID)
 		} else {
-			b.WriteString(fmt.Sprintf("- `%s` --_%s_--> **`%s`** (`%s`)\n", nodeID, conn.Edge.Type, conn.Node.Name, conn.Node.Type))
+			fmt.Fprintf(&b, "- `%s` --_%s_--> **`%s`** (`%s`)\n", nodeID, conn.Edge.Type, conn.Node.Name, conn.Node.Type)
 		}
 	}
 
@@ -417,7 +417,7 @@ func formatConcurrencyGraphMarkdown(nodeID string, connections []graph.Concurren
 
 func formatSourceCodeMarkdown(nodeID, code string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("## Source Code of `%s`\n\n", nodeID))
+	fmt.Fprintf(&b, "## Source Code of `%s`\n\n", nodeID)
 	b.WriteString("```go\n")
 	b.WriteString(code)
 	b.WriteString("```\n")
@@ -426,14 +426,14 @@ func formatSourceCodeMarkdown(nodeID, code string) string {
 
 func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResult) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("## Shortest Path: `%s` → `%s`\n\n", sourceID, targetID))
+	fmt.Fprintf(&b, "## Shortest Path: `%s` → `%s`\n\n", sourceID, targetID)
 
 	if len(pathResults) == 0 {
 		b.WriteString("_No path found._\n")
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("Path length: **%d** hop(s)\n\n", len(pathResults)-1))
+	fmt.Fprintf(&b, "Path length: **%d** hop(s)\n\n", len(pathResults)-1)
 	for i, pr := range pathResults {
 		var prefix string
 		if i == 0 {
@@ -444,9 +444,9 @@ func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResul
 			prefix = "→ "
 		}
 
-		b.WriteString(fmt.Sprintf("%s**`%s`** (`%s`)\n", prefix, pr.Node.Name, pr.Node.Type))
+		fmt.Fprintf(&b, "%s**`%s`** (`%s`)\n", prefix, pr.Node.Name, pr.Node.Type)
 		if pr.EdgeType != "" {
-			b.WriteString(fmt.Sprintf("  ↓ _%s_\n", pr.EdgeType))
+			fmt.Fprintf(&b, "  ↓ _%s_\n", pr.EdgeType)
 		}
 	}
 	return b.String()
@@ -455,7 +455,7 @@ func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResul
 func formatCypherMarkdown(query, jsonData string) string {
 	var b strings.Builder
 	b.WriteString("## Cypher Query Results\n\n")
-	b.WriteString(fmt.Sprintf("**Query:**\n```cypher\n%s\n```\n\n", query))
+	fmt.Fprintf(&b, "**Query:**\n```cypher\n%s\n```\n\n", query)
 	b.WriteString("**Results:**\n```json\n")
 	b.WriteString(jsonData)
 	b.WriteString("\n```\n")
