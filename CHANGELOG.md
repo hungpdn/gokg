@@ -4,13 +4,33 @@ All notable changes to GoKG will be documented in this file.
 
 The format follows Keep a Changelog, and this project uses semantic versioning once tagged releases begin.
 
-## [Unreleased]
+## [v0.1.0-alpha.2] - 2026-06-23
 
 ### Added
 
+- MCP protocol version negotiation for broader client compatibility.
+- Homebrew Cask and Scoop bucket publishing configuration through GoReleaser.
+- Linting support and CI/tooling updates, including `golangci-lint` configuration and related Makefile targets.
+- Additional regression coverage for MCP `execute_cypher`, JSON-RPC validation, Cypher parsing, graph queries, parser type references, watcher behavior, CLI cancellation, and BadgerDB rebuild validation.
+
 ### Changed
 
+- MCP `execute_cypher` now requires a positive `LIMIT` to protect agent clients from unbounded result sets. CLI `gokg query` remains unchanged.
+- File watching now skips hidden directories and common noisy trees such as `vendor`, `testdata`, and `node_modules`.
+- Parser type dependency tracking now follows struct fields, embedded interfaces, and interface method signatures.
+- Graph query evaluation and statistics reporting were tightened for more predictable results.
+- Workspace listing now returns names in stable sorted order.
+- README and Cypher reference docs were updated for the current MCP HTTP bridge, LIMIT behavior, and public-repo guidance.
+
 ### Fixed
+
+- Prevented `--rebuild --db` from deleting arbitrary non-Badger directories by validating BadgerDB markers before removal.
+- Rejected invalid JSON-RPC protocol versions in the MCP server.
+- Restricted HTTP MCP origin checks to loopback origins.
+- Propagated signal-aware root context through CLI commands and storage shutdown paths.
+- Consolidated variable node type handling so parser, graph, MCP, and documentation agree.
+- Fixed Cypher edge cases around positive `LIMIT`, duplicate `IMPLEMENTS` edges, and source-code line range validation.
+- Made MCP source-code Markdown output safe for code containing embedded backtick fences.
 
 ## [0.1.0-alpha.1] - 2026-06-21
 

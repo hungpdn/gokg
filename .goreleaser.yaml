@@ -49,6 +49,34 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
 
+homebrew_casks:
+  - name: gokg
+    ids:
+      - release-archives
+    binaries:
+      - gokg
+    repository:
+      owner: hungpdn
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.PUBLISH_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/hungpdn/gokg"
+    description: "Go-native knowledge graph and MCP server for Go codebases"
+    commit_msg_template: "chore(homebrew): update {{ .ProjectName }} to {{ .Tag }}"
+
+scoops:
+  - name: gokg
+    repository:
+      owner: hungpdn
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.PUBLISH_GITHUB_TOKEN }}"
+    homepage: "https://github.com/hungpdn/gokg"
+    description: "Go-native knowledge graph and MCP server for Go codebases"
+    license: MIT
+    commit_msg_template: "chore(scoop): update {{ .ProjectName }} to {{ .Tag }}"
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 

@@ -46,6 +46,22 @@ Pin a specific tagged version when you need reproducible installs:
 go install github.com/hungpdn/gokg/cmd/gokg@<version>
 ```
 
+### Install with Homebrew
+
+```bash
+brew tap hungpdn/tap
+brew install --cask gokg
+gokg version
+```
+
+### Install with Scoop
+
+```powershell
+scoop bucket add hungpdn https://github.com/hungpdn/scoop-bucket.git
+scoop install hungpdn/gokg
+gokg version
+```
+
 ### Install from Release Binaries
 
 Tagged GitHub Releases attach prebuilt binaries for:
@@ -56,7 +72,7 @@ Tagged GitHub Releases attach prebuilt binaries for:
 | Linux | `amd64`, `arm64` | `.tar.gz` |
 | Windows | `amd64` | `.zip` |
 
-Each release also includes a SHA-256 checksum file. Homebrew and Scoop packages are not published yet.
+Each release also includes a SHA-256 checksum file.
 
 ### Build from Source
 
