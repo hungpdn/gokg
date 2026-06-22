@@ -196,7 +196,9 @@ NODE TYPES (use in patterns as :TYPE):
   FOLDER     – a physical directory on disk
   FUNC       – a top-level function
   METHOD     – a method on a struct
-  VAR        – a package or local variable node
+  CONSTANT   – a package-scope constant
+  VARIABLE   – a package-scope variable
+  TYPE_ALIAS – a type alias or named non-struct/non-interface type
   STRUCT     – a struct type
   INTERFACE  – an interface type
   CHANNEL    – a channel variable (e.g. chan int)

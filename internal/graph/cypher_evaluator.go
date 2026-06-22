@@ -25,7 +25,6 @@ var validCypherNodeTypes = map[string]struct{}{
 	string(parser.NodeTypeConstant):  {},
 	string(parser.NodeTypeVariable):  {},
 	string(parser.NodeTypeTypeAlias): {},
-	string(parser.NodeTypeVar):       {},
 	string(parser.NodeTypeChannel):   {},
 	string(parser.NodeTypeGoroutine): {},
 	string(parser.NodeTypeBoundary):  {},

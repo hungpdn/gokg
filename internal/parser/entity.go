@@ -18,7 +18,6 @@ const (
 	NodeTypeConstant  NodeType = "CONSTANT"
 	NodeTypeVariable  NodeType = "VARIABLE"
 	NodeTypeTypeAlias NodeType = "TYPE_ALIAS"
-	NodeTypeVar       NodeType = "VAR"
 	NodeTypeChannel   NodeType = "CHANNEL"
 	NodeTypeGoroutine NodeType = "GOROUTINE"
 	NodeTypeBoundary  NodeType = "BOUNDARY" // External package/func
