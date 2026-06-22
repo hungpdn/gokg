@@ -1,7 +1,7 @@
 # GoKG - Golang Knowledge Graph
 
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/cmd/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg/cmd/gokg)
 ![Go Version](https://img.shields.io/badge/go-1.25-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
@@ -207,6 +207,7 @@ MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <positive n>]
 **WHERE operators:** `=`, `!=`, `CONTAINS`, plus `AND` between conditions.
 
 Validation is strict: unknown aliases, node/edge types, properties, and trailing tokens return errors instead of silently broadening the query.
+The CLI accepts queries without `LIMIT`, but MCP `execute_cypher` calls require a positive `LIMIT` to avoid unbounded responses.
 
 Examples:
 
@@ -250,24 +251,33 @@ For `stdio`
 }
 ```
 
-For `HTTP`
+For `HTTP` clients that need a stdio bridge, start GoKG separately with `gokg mcp --http`, then pin the bridge package version in your client config:
 ```json
 // for each repo
 {
   "mcpServers": {
     "gokg": {
-      "command": "gokg",
-      "args": ["mcp", "--http", "--addr", "127.0.0.1:8080"]
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@<pinned-version>",
+        "http://127.0.0.1:8080/mcp"
+      ]
     }
   }
 }
 
-// for workspace
+// for workspace, start gokg with:
+// gokg mcp --workspace <your-workspace> --http --addr 127.0.0.1:8080
 {
   "mcpServers": {
     "gokg": {
-      "command": "gokg",
-      "args": ["mcp", "--workspace", "<your-workspace>", "--http", "--addr", "127.0.0.1:8080"]
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@<pinned-version>",
+        "http://127.0.0.1:8080/mcp"
+      ]
     }
   }
 }

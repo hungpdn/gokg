@@ -222,7 +222,7 @@ func analyzeWorkspaceRepo(
 
 	dbPath := ws.GetRepoDBPath(repo.ID)
 	if rebuild {
-		if err := os.RemoveAll(dbPath); err != nil {
+		if err := rebuildBadgerDBPath(dbPath, true); err != nil {
 			return workspaceAnalysisResult{}, fmt.Errorf("failed to rebuild database for repo %q: %w", repo.ID, err)
 		}
 	}
@@ -375,18 +375,27 @@ func validateExistingRebuildDir(dbPath string, rebuildPath string) error {
 	if looksLikeBadgerDBDir(entries) {
 		return nil
 	}
-	return fmt.Errorf("refusing to rebuild non-empty directory %q because it does not look like a GoKG BadgerDB database", dbPath)
+	return fmt.Errorf("refusing to rebuild non-empty directory %q because it does not look like a complete GoKG BadgerDB database", dbPath)
 }
 
 func looksLikeBadgerDBDir(entries []os.DirEntry) bool {
+	hasManifest := false
+	hasKeyRegistry := false
+	hasDataFile := false
+
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "MANIFEST" || name == "KEYREGISTRY" || name == "DISCARD" ||
-			strings.HasSuffix(name, ".sst") || strings.HasSuffix(name, ".vlog") {
-			return true
+		switch {
+		case name == "MANIFEST":
+			hasManifest = true
+		case name == "KEYREGISTRY":
+			hasKeyRegistry = true
+		case name == "DISCARD", strings.HasSuffix(name, ".sst"), strings.HasSuffix(name, ".vlog"):
+			hasDataFile = true
 		}
 	}
-	return false
+
+	return hasManifest && hasKeyRegistry && hasDataFile
 }
 
 func validateRebuildDBPath(dbPath string, explicitDB bool) error {

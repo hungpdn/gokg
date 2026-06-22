@@ -13,7 +13,8 @@ MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <positive n>]
 - `MATCH` is required and describes the graph pattern.
 - `WHERE` is optional and filters matched aliases by properties.
 - `RETURN` is required and selects aliases or alias properties.
-- `LIMIT` is optional, must be a positive integer, and must come after `RETURN`.
+- `LIMIT` is optional for CLI queries, must be a positive integer when present, and must come after `RETURN`.
+- MCP `execute_cypher` calls require `LIMIT` to protect clients from unbounded result sets.
 - A line whose first non-whitespace characters are `--` is treated as a comment.
 
 Keywords, node types, edge types, operators, and property names are matched case-insensitively. Result keys preserve the property casing used in `RETURN`.

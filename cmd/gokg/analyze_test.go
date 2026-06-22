@@ -212,7 +212,20 @@ func TestRebuildBadgerDBPathRejectsNonBadgerDirectory(t *testing.T) {
 
 	err := rebuildBadgerDBPath(dir, true)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not look like a GoKG BadgerDB database")
+	assert.Contains(t, err.Error(), "does not look like a complete GoKG BadgerDB database")
+	assert.FileExists(t, keepFile)
+}
+
+func TestRebuildBadgerDBPathRejectsPartialBadgerMarkers(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "not-quite-a-db")
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "MANIFEST"), []byte("not badger"), 0644))
+	keepFile := filepath.Join(dir, "keep.txt")
+	require.NoError(t, os.WriteFile(keepFile, []byte("important"), 0644))
+
+	err := rebuildBadgerDBPath(dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not look like a complete GoKG BadgerDB database")
 	assert.FileExists(t, keepFile)
 }
 
@@ -222,6 +235,29 @@ func TestRebuildBadgerDBPathAllowsEmptyDirectory(t *testing.T) {
 
 	require.NoError(t, rebuildBadgerDBPath(dir, true))
 	assert.NoDirExists(t, dir)
+}
+
+func TestAnalyzeWorkspaceRebuildRejectsNonBadgerDirectory(t *testing.T) {
+	withGoBuildCache(t)
+	withTestHome(t)
+
+	repoDir := newTinyGoProjectWithModule(t, "example.com/service-a")
+	ws, err := workspace.Init("demo")
+	require.NoError(t, err)
+	require.NoError(t, ws.AddRepo("service-a", repoDir))
+
+	dbDir := ws.GetRepoDBPath("service-a")
+	require.NoError(t, os.MkdirAll(dbDir, 0755))
+	keepFile := filepath.Join(dbDir, "keep.txt")
+	require.NoError(t, os.WriteFile(keepFile, []byte("important"), 0644))
+
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--workspace", "demo", "--rebuild", "--gc=false"})
+
+	err = cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not look like a complete GoKG BadgerDB database")
+	assert.FileExists(t, keepFile)
 }
 
 func newTinyGoProject(t *testing.T) string {

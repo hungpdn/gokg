@@ -325,6 +325,41 @@ func TestHandleCallUnknownTool(t *testing.T) {
 	assert.Contains(t, res.Error.Message, "Unknown tool")
 }
 
+func TestHandleCallExecuteCypherRequiresLimit(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "pkg.A", Type: parser.NodeTypeFunc, Name: "A", PkgPath: "pkg"})
+	server := NewServer(g)
+
+	paramsRaw := []byte(`{"name": "execute_cypher", "arguments": {"query": "MATCH (n:FUNC) RETURN n.Name"}}`)
+	req := &Request{JSONRPC: "2.0", ID: 8, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Contains(t, res.Error.Message, "execute_cypher requires LIMIT")
+}
+
+func TestHandleCallExecuteCypherWithLimit(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "pkg.A", Type: parser.NodeTypeFunc, Name: "A", PkgPath: "pkg"})
+	server := NewServer(g)
+
+	paramsRaw := []byte(`{"name": "execute_cypher", "arguments": {"query": "MATCH (n:FUNC) RETURN n.Name LIMIT 1"}}`)
+	req := &Request{JSONRPC: "2.0", ID: 9, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.Nil(t, res.Error)
+	resultMap := res.Result.(map[string]interface{})
+	content := resultMap["content"].([]map[string]interface{})
+	text := content[0]["text"].(string)
+
+	assert.Contains(t, text, "Cypher Query Results")
+	assert.Contains(t, text, `"n.Name": "A"`)
+}
+
 func TestServeAcceptsLargeStdioMessages(t *testing.T) {
 	g := graph.NewGraph(nil)
 	server := NewServer(g)

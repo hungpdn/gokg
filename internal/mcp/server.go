@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,8 @@ const (
 	latestMCPProtocolVersion = "2025-06-18"
 	legacyMCPProtocolVersion = "2024-11-05"
 )
+
+var errMCPCypherLimitRequired = errors.New("execute_cypher requires LIMIT to protect MCP clients from unbounded result sets")
 
 var supportedMCPProtocolVersions = map[string]struct{}{
 	latestMCPProtocolVersion: {},
@@ -225,6 +228,8 @@ func (s *Server) handleToolsList(req *Request) *Response {
 
 SYNTAX: MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
 
+For MCP execute_cypher calls, LIMIT is required to protect clients from unbounded result sets.
+
 NODE TYPES (use in patterns as :TYPE):
   PACKAGE    – a Go package (e.g. github.com/org/repo/internal/parser)
   FILE       – a .go source file
@@ -296,7 +301,7 @@ Always include MATCH and RETURN. Use LIMIT after RETURN to cap large results.`,
 				"properties": map[string]interface{}{
 					"query": map[string]interface{}{
 						"type":        "string",
-						"description": "A GoKG Cypher query string. Must include MATCH and RETURN; optional LIMIT comes after RETURN. See tool description for full syntax and node/edge type reference.",
+						"description": "A GoKG Cypher query string. Must include MATCH, RETURN, and LIMIT. LIMIT comes after RETURN. See tool description for full syntax and node/edge type reference.",
 					},
 				},
 				"required": []string{"query"},
@@ -387,6 +392,9 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 		q, err := cypher.NewParser(cypher.NewLexer(params.Arguments.Query)).ParseQuery()
 		if err != nil {
 			return s.errorResult(req.ID, fmt.Errorf("cypher parse error: %w", err))
+		}
+		if q.Limit <= 0 {
+			return s.errorResult(req.ID, errMCPCypherLimitRequired)
 		}
 		rows, err := qb.ExecuteCypher(q)
 		if err != nil {
