@@ -116,9 +116,7 @@ func (p *Parser) extractTypeSpec(pkg *packages.Package, filename string, node *a
 		Type:   EdgeTypeContains,
 		RepoID: p.RepoID,
 	})
-	p.addTypeReferenceEdges(typeID, pkg.TypesInfo.TypeOf(node.Type), mu, result)
-	p.addTypeReferenceEdges(typeID, obj.Type(), mu, result)
-	p.addTypeReferenceEdges(typeID, obj.Type().Underlying(), mu, result)
+	p.addTypeReferenceEdgesFromTypes(typeID, mu, result, pkg.TypesInfo.TypeOf(node.Type), obj.Type(), obj.Type().Underlying())
 
 	if iface, ok := node.Type.(*ast.InterfaceType); ok {
 		p.extractInterfaceMethods(pkg, filename, typeID, iface, mu, result)
@@ -664,8 +662,14 @@ func (p *Parser) addInstantiationEdge(from string, typ types.Type, occurrence Ed
 }
 
 func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mutex, result *ParseResult) {
+	p.addTypeReferenceEdgesFromTypes(from, mu, result, typ)
+}
+
+func (p *Parser) addTypeReferenceEdgesFromTypes(from string, mu *sync.Mutex, result *ParseResult, typs ...types.Type) {
 	typeIDs := make(map[string]string)
-	collectGraphTypeIDs(typ, typeIDs)
+	for _, typ := range typs {
+		collectGraphTypeIDs(typ, typeIDs)
+	}
 
 	for typeID, pkgPath := range typeIDs {
 		if typeID == from {
@@ -1046,6 +1050,17 @@ func collectGraphTypeIDs(typ types.Type, out map[string]string) {
 	case *types.Map:
 		collectGraphTypeIDs(t.Key(), out)
 		collectGraphTypeIDs(t.Elem(), out)
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			collectGraphTypeIDs(t.Field(i).Type(), out)
+		}
+	case *types.Interface:
+		for i := 0; i < t.NumEmbeddeds(); i++ {
+			collectGraphTypeIDs(t.EmbeddedType(i), out)
+		}
+		for i := 0; i < t.NumExplicitMethods(); i++ {
+			collectGraphTypeIDs(t.ExplicitMethod(i).Type(), out)
+		}
 	case *types.Signature:
 		if t.Recv() != nil {
 			collectGraphTypeIDs(t.Recv().Type(), out)

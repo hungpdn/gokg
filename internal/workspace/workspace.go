@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -209,6 +210,7 @@ func List() ([]string, error) {
 			}
 		}
 	}
+	sort.Strings(names)
 	return names, nil
 }
 

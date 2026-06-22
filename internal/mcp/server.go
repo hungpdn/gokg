@@ -90,6 +90,10 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) handleRequest(req *Request) *Response {
+	if req.JSONRPC != "" && req.JSONRPC != "2.0" {
+		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32600, Message: "Invalid Request"}}
+	}
+
 	switch req.Method {
 	case "initialize":
 		return s.handleInitialize(req)
@@ -226,7 +230,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 			"name": "execute_cypher",
 			"description": `Executes a GoKG Cypher query against the Go source code knowledge graph.
 
-SYNTAX: MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
+SYNTAX: MATCH <pattern> [WHERE <conditions>] RETURN <items> LIMIT <positive n>
 
 For MCP execute_cypher calls, LIMIT is required to protect clients from unbounded result sets.
 
@@ -290,12 +294,12 @@ EXAMPLES:
   MATCH (n:FUNC) WHERE n.PkgPath CONTAINS "parser" RETURN n LIMIT 20
   MATCH (a:FUNC)-[r:CALLS]->(b:FUNC) WHERE a.Name = "Analyze" RETURN b.Name LIMIT 10
   MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = "Analyze" AND b.Type != "BOUNDARY" RETURN b.Name, b.Type LIMIT 20
-  MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name
-  MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name
-  MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name
-  MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n
+  MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name LIMIT 20
+  MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name LIMIT 20
+  MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name LIMIT 20
+  MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n LIMIT 20
 
-Always include MATCH and RETURN. Use LIMIT after RETURN to cap large results.`,
+Always include MATCH, RETURN, and a positive LIMIT after RETURN.`,
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -425,7 +429,7 @@ func formatNodeListMarkdown(title, nodeID string, nodes []*parser.Node) string {
 	fmt.Fprintf(&b, "Found **%d** node(s):\n\n", len(nodes))
 	for _, n := range nodes {
 		fmt.Fprintf(&b, "- **`%s`** (`%s`) — ID: `%s`", n.Name, n.Type, n.ID)
-		if n.FilePath != "" && n.Lines[0] > 0 {
+		if n.FilePath != "" && n.Lines[0] > 0 && n.Lines[1] >= n.Lines[0] {
 			fmt.Fprintf(&b, " — `%s` L%d-%d", n.FilePath, n.Lines[0], n.Lines[1])
 		} else if n.PkgPath != "" {
 			fmt.Fprintf(&b, " — pkg: `%s`", n.PkgPath)
@@ -463,9 +467,7 @@ func formatConcurrencyGraphMarkdown(nodeID string, connections []graph.Concurren
 func formatSourceCodeMarkdown(nodeID, code string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Source Code of `%s`\n\n", nodeID)
-	b.WriteString("```go\n")
-	b.WriteString(code)
-	b.WriteString("```\n")
+	writeMarkdownFencedBlock(&b, "go", code)
 	return b.String()
 }
 
@@ -500,11 +502,46 @@ func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResul
 func formatCypherMarkdown(query, jsonData string) string {
 	var b strings.Builder
 	b.WriteString("## Cypher Query Results\n\n")
-	fmt.Fprintf(&b, "**Query:**\n```cypher\n%s\n```\n\n", query)
-	b.WriteString("**Results:**\n```json\n")
-	b.WriteString(jsonData)
-	b.WriteString("\n```\n")
+	b.WriteString("**Query:**\n")
+	writeMarkdownFencedBlock(&b, "cypher", query)
+	b.WriteByte('\n')
+	b.WriteString("**Results:**\n")
+	writeMarkdownFencedBlock(&b, "json", jsonData)
 	return b.String()
+}
+
+func writeMarkdownFencedBlock(b *strings.Builder, language string, content string) {
+	fence := markdownFence(content)
+	b.WriteString(fence)
+	b.WriteString(language)
+	b.WriteByte('\n')
+	b.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString(fence)
+	b.WriteByte('\n')
+}
+
+func markdownFence(content string) string {
+	maxRun := 0
+	currentRun := 0
+	for _, r := range content {
+		if r == '`' {
+			currentRun++
+			if currentRun > maxRun {
+				maxRun = currentRun
+			}
+			continue
+		}
+		currentRun = 0
+	}
+	if maxRun < 3 {
+		maxRun = 3
+	} else {
+		maxRun++
+	}
+	return strings.Repeat("`", maxRun)
 }
 
 func encodeIndentedJSON(value interface{}) (string, error) {

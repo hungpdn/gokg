@@ -164,8 +164,7 @@ func TestListWorkspaces(t *testing.T) {
 
 	names, err := List()
 	require.NoError(t, err)
-	assert.Contains(t, names, "ws-alpha")
-	assert.Contains(t, names, "ws-beta")
+	assert.Equal(t, []string{"ws-alpha", "ws-beta"}, names)
 }
 
 func TestRejectsInvalidWorkspaceNames(t *testing.T) {

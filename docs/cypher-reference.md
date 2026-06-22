@@ -283,7 +283,7 @@ Example workflow:
 1. User: "Find all places that use the Storage interface"
 2. Agent calls search_nodes("Storage")
 3. Agent calls execute_cypher(
-   "MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) WHERE i.Name = \"Storage\" RETURN s.Name, s.PkgPath"
+   "MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) WHERE i.Name = \"Storage\" RETURN s.Name, s.PkgPath LIMIT 20"
    )
 4. Agent calls get_source_code for the relevant interface or implementors.
 5. Agent synthesizes the answer with exact node IDs and source references.

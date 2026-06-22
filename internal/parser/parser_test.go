@@ -146,6 +146,16 @@ var DefaultItem = Item{Status: StatusReady}
 
 type Item struct {
 	Status Status
+	Related []Status
+}
+
+type Reader interface {
+	Read() Item
+}
+
+type Store interface {
+	Reader
+	Save(Item) error
 }
 
 func (i Item) Ready() bool {
@@ -167,6 +177,8 @@ func TestReady(t *testing.T) {
 	statusReadyID := pkgID + ".StatusReady"
 	defaultItemID := pkgID + ".DefaultItem"
 	itemID := pkgID + ".Item"
+	readerID := pkgID + ".Reader"
+	storeID := pkgID + ".Store"
 	readyID := pkgID + "." + pkgID + ".Item.Ready"
 	testReadyID := pkgID + ".TestReady"
 	modelFile := filepath.Join(dir, "model.go")
@@ -194,6 +206,10 @@ func TestReady(t *testing.T) {
 	assert.Equal(t, NodeTypeVariable, nodes[defaultItemID].Type)
 	require.NotNil(t, nodes[itemID])
 	assert.Equal(t, NodeTypeStruct, nodes[itemID].Type)
+	require.NotNil(t, nodes[readerID])
+	assert.Equal(t, NodeTypeInterface, nodes[readerID].Type)
+	require.NotNil(t, nodes[storeID])
+	assert.Equal(t, NodeTypeInterface, nodes[storeID].Type)
 	require.NotNil(t, nodes[testReadyID])
 	assert.Equal(t, NodeTypeFunc, nodes[testReadyID].Type)
 	require.NotNil(t, nodes[testFile], "test files should be included in workspace parsing")
@@ -205,6 +221,11 @@ func TestReady(t *testing.T) {
 	assert.True(t, hasEdge(result, testFile, testReadyID, EdgeTypeContains))
 	assert.True(t, hasEdge(result, aliasID, itemID, EdgeTypeReferences))
 	assert.True(t, hasEdge(result, statusReadyID, statusID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, itemID, statusID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, readerID, itemID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, storeID, readerID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, storeID, itemID, EdgeTypeReferences))
+	assert.Len(t, edgesBy(result, itemID, statusID, EdgeTypeReferences), 1)
 	assert.True(t, hasEdge(result, defaultItemID, itemID, EdgeTypeReferences))
 	assert.True(t, hasEdge(result, defaultItemID, itemID, EdgeTypeInstantiates))
 	assert.True(t, hasEdge(result, defaultItemID, statusReadyID, EdgeTypeReferences))

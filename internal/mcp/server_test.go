@@ -118,6 +118,23 @@ func TestHandleUnknownRequestReturnsMethodNotFound(t *testing.T) {
 	assert.Contains(t, res.Error.Message, "Method not found")
 }
 
+func TestHandleRequestRejectsInvalidJSONRPCVersion(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+
+	req := &Request{
+		JSONRPC: "1.0",
+		ID:      100,
+		Method:  "initialize",
+	}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Equal(t, -32600, res.Error.Code)
+	assert.Equal(t, "Invalid Request", res.Error.Message)
+}
+
 func requireAddNode(t *testing.T, g *graph.Graph, ctx context.Context, node *parser.Node) {
 	t.Helper()
 
@@ -358,6 +375,17 @@ func TestHandleCallExecuteCypherWithLimit(t *testing.T) {
 
 	assert.Contains(t, text, "Cypher Query Results")
 	assert.Contains(t, text, `"n.Name": "A"`)
+}
+
+func TestMarkdownFenceExpandsForEmbeddedBackticks(t *testing.T) {
+	code := "package main\n\nconst sample = `contains ``` fence`\n"
+
+	assert.Equal(t, "````", markdownFence(code))
+
+	text := formatSourceCodeMarkdown("pkg.Sample", code)
+	assert.Contains(t, text, "````go\n")
+	assert.Contains(t, text, code)
+	assert.Contains(t, text, "\n````\n")
 }
 
 func TestServeAcceptsLargeStdioMessages(t *testing.T) {
