@@ -63,7 +63,10 @@ func TestWatcher_DebounceAndUpdate(t *testing.T) {
 	defer cancel()
 
 	dir := setupTestDir(t)
+	mainGoPath := filepath.Join(dir, "main.go")
 	g, p := setupTestGraphAndParser(t)
+	seedTestPackageSnapshot(t, ctx, g, mainGoPath)
+	requireNoError(t, os.Remove(mainGoPath))
 
 	w, err := NewWatcher(g, p, dir)
 	if err != nil {
@@ -81,10 +84,9 @@ func TestWatcher_DebounceAndUpdate(t *testing.T) {
 
 	called := false
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		defer wg.Done()
 		called = true
-		err := update(updateCtx)
-		wg.Done()
-		return err
+		return update(updateCtx)
 	})
 
 	// Manually trigger debounce for the directory
@@ -112,7 +114,9 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	defer cancel()
 
 	dir := setupTestDir(t)
+	mainGoPath := filepath.Join(dir, "main.go")
 	g, p := setupTestGraphAndParser(t)
+	seedTestPackageSnapshot(t, ctx, g, mainGoPath)
 
 	// create hidden dir which should be skipped
 	hiddenDir := filepath.Join(dir, ".hidden")
@@ -134,10 +138,9 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 
 	called := false
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		defer wg.Done()
 		called = true
-		err := update(updateCtx)
-		wg.Done()
-		return err
+		return update(updateCtx)
 	})
 
 	if err := w.Start(ctx); err != nil {
@@ -148,16 +151,9 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	// give watcher a moment to start and add directories
 	time.Sleep(50 * time.Millisecond)
 
-	// Modify the go file to trigger a write event
-	mainGoPath := filepath.Join(dir, "main.go")
-	f, err := os.OpenFile(mainGoPath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("failed to open main.go: %v", err)
-	}
-	if _, err := f.WriteString("\n// modified\n"); err != nil {
-		t.Fatalf("failed to append to main.go: %v", err)
-	}
-	requireNoError(t, f.Close())
+	// Remove the go file to trigger an fsnotify event without depending on the
+	// speed of go/packages on Windows CI.
+	requireNoError(t, os.Remove(mainGoPath))
 
 	c := make(chan struct{})
 	go func() {
@@ -181,17 +177,7 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	mainPath := filepath.Join(dir, "main.go")
 
 	g := graph.NewGraph(nil)
-	requireNoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
-		Nodes: []*parser.Node{
-			{ID: "testmodule", Type: parser.NodeTypePackage, Name: "main", PkgPath: "testmodule"},
-			{ID: mainPath, Type: parser.NodeTypeFile, Name: "main.go", PkgPath: "testmodule", FilePath: mainPath},
-			{ID: "testmodule.main", Type: parser.NodeTypeFunc, Name: "main", PkgPath: "testmodule", FilePath: mainPath},
-		},
-		Edges: []*parser.Edge{
-			{From: "testmodule", To: mainPath, Type: parser.EdgeTypeContains},
-			{From: mainPath, To: "testmodule.main", Type: parser.EdgeTypeContains},
-		},
-	}))
+	seedTestPackageSnapshot(t, ctx, g, mainPath)
 
 	requireNoError(t, os.Remove(mainPath))
 
@@ -215,6 +201,22 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected removed package node to be missing")
 	}
+}
+
+func seedTestPackageSnapshot(t *testing.T, ctx context.Context, g *graph.Graph, mainPath string) {
+	t.Helper()
+
+	requireNoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "testmodule", Type: parser.NodeTypePackage, Name: "main", PkgPath: "testmodule"},
+			{ID: mainPath, Type: parser.NodeTypeFile, Name: "main.go", PkgPath: "testmodule", FilePath: mainPath},
+			{ID: "testmodule.main", Type: parser.NodeTypeFunc, Name: "main", PkgPath: "testmodule", FilePath: mainPath},
+		},
+		Edges: []*parser.Edge{
+			{From: "testmodule", To: mainPath, Type: parser.EdgeTypeContains},
+			{From: mainPath, To: "testmodule.main", Type: parser.EdgeTypeContains},
+		},
+	}))
 }
 
 func requireNoError(t *testing.T, err error) {
