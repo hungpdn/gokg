@@ -39,7 +39,7 @@ func newStatsCommand() *cobra.Command {
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 	dbPath, _ := cmd.Flags().GetString("db")
 	workspaceName, _ := cmd.Flags().GetString("workspace")
 	jsonOutput, _ := cmd.Flags().GetBool("json")

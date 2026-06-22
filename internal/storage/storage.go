@@ -10,7 +10,9 @@ type Storage interface {
 	// Get retrieves a value by key from the database.
 	Get(ctx context.Context, key []byte) ([]byte, error)
 
-	// Iterate iterates over all key-value pairs in the database.
+	// Iterate iterates over all key-value pairs in the database. The key and
+	// value slices passed to fn are only valid until fn returns; copy them before
+	// retaining them.
 	Iterate(ctx context.Context, fn func(key []byte, value []byte) error) error
 
 	// Delete removes a key-value pair from the database.
@@ -33,7 +35,8 @@ type BatchPutter interface {
 }
 
 // PrefixIterator is implemented by storage backends that can efficiently scan
-// keys with a shared prefix.
+// keys with a shared prefix. The key and value slices passed to fn are only
+// valid until fn returns; copy them before retaining them.
 type PrefixIterator interface {
 	IteratePrefix(ctx context.Context, prefix []byte, fn func(key []byte, value []byte) error) error
 }

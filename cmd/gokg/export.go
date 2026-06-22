@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 
@@ -22,7 +21,7 @@ var exportCmd = &cobra.Command{
 		outFile, _ := cmd.Flags().GetString("out")
 		workspaceName, _ := cmd.Flags().GetString("workspace")
 
-		ctx := context.Background()
+		ctx := cmd.Context()
 		var g *graph.Graph
 
 		if workspaceName != "" {

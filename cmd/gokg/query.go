@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -21,7 +20,7 @@ func newQueryCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			queryString := args[0]
-			ctx := context.Background()
+			ctx := cmd.Context()
 			logOut := cmd.ErrOrStderr()
 
 			if _, err := fmt.Fprintln(logOut, "Parsing query..."); err != nil {

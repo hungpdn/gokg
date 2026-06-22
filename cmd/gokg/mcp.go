@@ -26,7 +26,7 @@ var mcpCmd = &cobra.Command{
 	Short: "Start the MCP server",
 	Long:  `Start the gokg MCP (Model Context Protocol) server for AI agents. By default it communicates over stdio; pass --http to serve JSON-RPC over HTTP.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx := cmd.Context()
 
 		dbPath, _ := cmd.Flags().GetString("db")
 		enableWatch, _ := cmd.Flags().GetBool("watch")

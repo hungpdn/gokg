@@ -46,7 +46,7 @@ func runAnalyze(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 	startedAt := time.Now()
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	workspaceName, _ := cmd.Flags().GetString("workspace")
 	if workspaceName != "" {
