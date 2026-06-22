@@ -203,6 +203,28 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	}
 }
 
+func TestShouldSkipWatchDir(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: ".git", want: true},
+		{name: ".gokg", want: true},
+		{name: "vendor", want: true},
+		{name: "testdata", want: true},
+		{name: "node_modules", want: true},
+		{name: "internal", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSkipWatchDir(tt.name); got != tt.want {
+				t.Fatalf("shouldSkipWatchDir(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func seedTestPackageSnapshot(t *testing.T, ctx context.Context, g *graph.Graph, mainPath string) {
 	t.Helper()
 

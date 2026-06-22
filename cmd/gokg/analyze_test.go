@@ -65,7 +65,9 @@ func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
 	withGoBuildCache(t)
 	projectDir := newTinyGoProject(t)
 	dbDir := filepath.Join(t.TempDir(), "custom-db")
-	require.NoError(t, os.MkdirAll(dbDir, 0755))
+	store, err := storage.NewBadgerStorage(dbDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 	staleFile := filepath.Join(dbDir, "STALE")
 	require.NoError(t, os.WriteFile(staleFile, []byte("old data"), 0644))
 
@@ -200,6 +202,26 @@ func TestRebuildBadgerDBPathRejectsFiles(t *testing.T) {
 	err := rebuildBadgerDBPath(filePath, true)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-directory")
+}
+
+func TestRebuildBadgerDBPathRejectsNonBadgerDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "not-a-db")
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	keepFile := filepath.Join(dir, "keep.txt")
+	require.NoError(t, os.WriteFile(keepFile, []byte("important"), 0644))
+
+	err := rebuildBadgerDBPath(dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not look like a GoKG BadgerDB database")
+	assert.FileExists(t, keepFile)
+}
+
+func TestRebuildBadgerDBPathAllowsEmptyDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "empty-db")
+	require.NoError(t, os.MkdirAll(dir, 0755))
+
+	require.NoError(t, rebuildBadgerDBPath(dir, true))
+	assert.NoDirExists(t, dir)
 }
 
 func newTinyGoProject(t *testing.T) string {

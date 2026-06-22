@@ -70,8 +70,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			return err
 		}
 		if d.IsDir() {
-			// Skip hidden directories like .git or .gokg
-			if strings.HasPrefix(d.Name(), ".") && path != w.rootDir {
+			if path != w.rootDir && shouldSkipWatchDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return w.watcher.Add(path)
@@ -101,6 +100,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 				if event.Has(fsnotify.Create) {
 					info, err := os.Stat(event.Name)
 					if err == nil && info.IsDir() {
+						if shouldSkipWatchDir(info.Name()) {
+							continue
+						}
 						if err := w.watcher.Add(event.Name); err != nil {
 							log.Printf("Watcher add error for %s: %v", event.Name, err)
 						}
@@ -127,6 +129,13 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func shouldSkipWatchDir(name string) bool {
+	return strings.HasPrefix(name, ".") ||
+		name == "vendor" ||
+		name == "testdata" ||
+		name == "node_modules"
 }
 
 func (w *Watcher) debounce(ctx context.Context, dir string) {

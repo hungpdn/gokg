@@ -40,7 +40,7 @@ gokg version
 
 Make sure your Go binary directory is on `PATH`. It is usually `$(go env GOPATH)/bin` or `$(go env GOBIN)` when `GOBIN` is set.
 
-After tagged releases are published, pin a specific version when you need reproducible installs:
+Pin a specific tagged version when you need reproducible installs:
 
 ```bash
 go install github.com/hungpdn/gokg/cmd/gokg@<version>
@@ -56,7 +56,7 @@ Tagged GitHub Releases attach prebuilt binaries for:
 | Linux | `amd64`, `arm64` | `.tar.gz` |
 | Windows | `amd64` | `.zip` |
 
-Each release also includes a SHA-256 checksum file. Homebrew and Scoop packages will be added after the first tagged release.
+Each release also includes a SHA-256 checksum file. Homebrew and Scoop packages are not published yet.
 
 ### Build from Source
 
@@ -277,7 +277,7 @@ For `HTTP`
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md), and [docs/release.md](docs/release.md).
 
 ## License
 

@@ -355,10 +355,38 @@ func rebuildBadgerDBPath(dbPath string, explicitDB bool) error {
 	if !info.IsDir() {
 		return fmt.Errorf("refusing to rebuild non-directory db path %q", dbPath)
 	}
+	if err := validateExistingRebuildDir(dbPath, rebuildPath); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(rebuildPath); err != nil {
 		return fmt.Errorf("remove db path %q before rebuild: %w", dbPath, err)
 	}
 	return nil
+}
+
+func validateExistingRebuildDir(dbPath string, rebuildPath string) error {
+	entries, err := os.ReadDir(rebuildPath)
+	if err != nil {
+		return fmt.Errorf("inspect db directory %q before rebuild: %w", dbPath, err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if looksLikeBadgerDBDir(entries) {
+		return nil
+	}
+	return fmt.Errorf("refusing to rebuild non-empty directory %q because it does not look like a GoKG BadgerDB database", dbPath)
+}
+
+func looksLikeBadgerDBDir(entries []os.DirEntry) bool {
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "MANIFEST" || name == "KEYREGISTRY" || name == "DISCARD" ||
+			strings.HasSuffix(name, ".sst") || strings.HasSuffix(name, ".vlog") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRebuildDBPath(dbPath string, explicitDB bool) error {
