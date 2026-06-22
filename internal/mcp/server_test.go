@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -35,6 +36,86 @@ func TestHandleInitialize(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "gokg", serverInfo["name"])
 	assert.NotEmpty(t, serverInfo["version"])
+}
+
+func TestHandleInitializeNegotiatesProtocolVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		want      string
+	}{
+		{
+			name:      "latest supported version",
+			requested: latestMCPProtocolVersion,
+			want:      latestMCPProtocolVersion,
+		},
+		{
+			name:      "legacy supported version",
+			requested: legacyMCPProtocolVersion,
+			want:      legacyMCPProtocolVersion,
+		},
+		{
+			name:      "unsupported version falls back to latest",
+			requested: "1999-01-01",
+			want:      latestMCPProtocolVersion,
+		},
+		{
+			name: "missing version falls back to latest",
+			want: latestMCPProtocolVersion,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := graph.NewGraph(nil)
+			server := NewServer(g)
+			req := &Request{
+				JSONRPC: "2.0",
+				ID:      1,
+				Method:  "initialize",
+			}
+			if tt.requested != "" {
+				req.Params = json.RawMessage(fmt.Sprintf(`{"protocolVersion":%q}`, tt.requested))
+			}
+
+			res := server.handleRequest(req)
+			require.NotNil(t, res)
+			require.Nil(t, res.Error)
+
+			resultMap, ok := res.Result.(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, tt.want, resultMap["protocolVersion"])
+		})
+	}
+}
+
+func TestHandleInitializedNotificationReturnsNoResponse(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+
+	req := &Request{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+
+	assert.Nil(t, server.handleRequest(req))
+}
+
+func TestHandleUnknownRequestReturnsMethodNotFound(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      99,
+		Method:  "unknown/method",
+	}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Equal(t, -32601, res.Error.Code)
+	assert.Contains(t, res.Error.Message, "Method not found")
 }
 
 func requireAddNode(t *testing.T, g *graph.Graph, ctx context.Context, node *parser.Node) {

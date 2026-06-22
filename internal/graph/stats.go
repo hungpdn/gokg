@@ -56,9 +56,9 @@ func (g *Graph) Stats() Stats {
 
 		if node.Type == parser.NodeTypeFile {
 			stats.FileNodeCount++
-		}
-		if node.FilePath != "" {
-			sourceFiles[node.FilePath] = struct{}{}
+			if node.FilePath != "" {
+				sourceFiles[node.FilePath] = struct{}{}
+			}
 		}
 		if node.RepoID != "" {
 			stats.NodesByRepo[node.RepoID]++

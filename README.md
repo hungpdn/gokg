@@ -3,7 +3,6 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg)
 ![Go Version](https://img.shields.io/badge/go-1.25-blue)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
@@ -98,10 +97,10 @@ Current self-analysis baseline for this repository:
 
 | Metric | Value |
 |---|---:|
-| Nodes | 1019 |
-| Edges | 4297 |
-| Source files | 62 |
-| Analysis time | 1.59s |
+| Nodes | 1036 |
+| Edges | 4368 |
+| Source files | 48 |
+| Analysis time | 1.46s |
 
 Environment: Go `1.25.0`, `darwin/amd64`.
 

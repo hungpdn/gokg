@@ -19,7 +19,17 @@ type Server struct {
 	graph *graph.Graph
 }
 
-const maxStdioMessageBytes = 4 << 20
+const (
+	maxStdioMessageBytes = 4 << 20
+
+	latestMCPProtocolVersion = "2025-06-18"
+	legacyMCPProtocolVersion = "2024-11-05"
+)
+
+var supportedMCPProtocolVersions = map[string]struct{}{
+	latestMCPProtocolVersion: {},
+	legacyMCPProtocolVersion: {},
+}
 
 func NewServer(g *graph.Graph) *Server {
 	return &Server{graph: g}
@@ -79,18 +89,43 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 func (s *Server) handleRequest(req *Request) *Response {
 	switch req.Method {
 	case "initialize":
-		return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
-			"serverInfo":      map[string]string{"name": "gokg", "version": version.Get().Version},
-		}}
+		return s.handleInitialize(req)
+	case "notifications/initialized":
+		return nil
 	case "tools/list":
 		return s.handleToolsList(req)
 	case "tools/call":
 		return s.handleToolsCall(req)
 	}
 
+	if req.ID != nil {
+		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Method not found: " + req.Method}}
+	}
 	return nil
+}
+
+func (s *Server) handleInitialize(req *Request) *Response {
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
+		}
+	}
+
+	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
+		"protocolVersion": negotiateMCPProtocolVersion(params.ProtocolVersion),
+		"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
+		"serverInfo":      map[string]string{"name": "gokg", "version": version.Get().Version},
+	}}
+}
+
+func negotiateMCPProtocolVersion(requested string) string {
+	if _, ok := supportedMCPProtocolVersions[requested]; ok {
+		return requested
+	}
+	return latestMCPProtocolVersion
 }
 
 func (s *Server) handleToolsList(req *Request) *Response {

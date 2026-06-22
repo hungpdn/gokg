@@ -23,12 +23,13 @@ First off, thank you for considering contributing to GoKG! It's people like you 
 ## Local Development Setup
 1. Clone your fork locally.
 2. Run `go mod tidy` to download dependencies.
-3. Make your changes in the `internal/` or `cmd/` directories.
-4. Run tests using `go test ./...`
-5. Run the analyzer locally to test graph generation: `go run ./cmd/gokg analyze`.
+3. Install pinned development tools with `make install-tools` when you plan to run lint locally.
+4. Make your changes in the `internal/` or `cmd/` directories.
+5. Run tests using `go test ./...`
+6. Run the analyzer locally to test graph generation: `go run ./cmd/gokg analyze`.
 
 ## Code Style
-We follow standard Go formatting conventions. Please run `go fmt ./...` before committing.
+We follow standard Go formatting conventions. Please run `go fmt ./...` before committing. CI runs `golangci-lint` v2.12.2; use `make install-tools` and `make lint` to run the same linter locally.
 
 ## Security Reports
 Please do not open public issues for suspected vulnerabilities. See [SECURITY.md](SECURITY.md) for the reporting process.
