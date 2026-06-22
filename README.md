@@ -82,43 +82,6 @@ GoKG expects a loadable Go module or workspace. If `go list ./...` fails for a r
 
 ---
 
-## Technical Baseline
-
-Before a public release, the baseline check is:
-
-```bash
-go test ./...
-gokg analyze --db /tmp/gokg-public-baseline --rebuild --tests
-```
-
-On Windows, replace `/tmp/gokg-public-baseline` with a writable temporary directory.
-
-Current self-analysis baseline for this repository:
-
-| Metric | Value |
-|---|---:|
-| Nodes | 1036 |
-| Edges | 4368 |
-| Source files | 48 |
-| Analysis time | 1.46s |
-
-Environment: Go `1.25.0`, `darwin/amd64`.
-
----
-
-## Release Process
-
-CI runs on Linux, macOS, and Windows for every push and pull request to `main`. Pushing a tag that starts with `v` runs the release workflow:
-
-```bash
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
-```
-
-The release workflow uses GoReleaser to build `gokg` for Linux, macOS, and Windows, inject `version`, `commit`, and `date` metadata, package archives, generate checksums, and publish a GitHub Release. See [docs/release.md](docs/release.md) for the full release checklist.
-
----
-
 ## Usage
 
 ### 1. Build the Knowledge Graph
