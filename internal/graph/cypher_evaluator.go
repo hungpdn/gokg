@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	cypherAliasNode = "node"
-	cypherAliasEdge = "edge"
+	cypherAliasNode         = "node"
+	cypherAliasEdge         = "edge"
+	maxCypherResultPrealloc = 1024
 )
 
 var validCypherNodeTypes = map[string]struct{}{
@@ -202,6 +203,9 @@ func appendProjectedCypherRow(results []CypherResultRow, q *cypher.Query, row Cy
 
 func cypherResultCapacity(limit int) int {
 	if limit > 0 {
+		if limit > maxCypherResultPrealloc {
+			return maxCypherResultPrealloc
+		}
 		return limit
 	}
 	return 0

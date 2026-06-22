@@ -151,6 +151,7 @@ gokg mcp --http --addr 127.0.0.1:8080
 `gokg mcp --http` serves JSON-RPC over HTTP at `/mcp` by default and exposes a health check at `/healthz`. Use `--path` to change the MCP endpoint.
 
 HTTP mode is intended for local trusted clients. It binds to `127.0.0.1` by default and does not add authentication, so avoid exposing it on a public interface unless another trusted network layer protects it.
+Browser CORS access is limited to loopback origins such as `localhost`, `127.0.0.1`, and `[::1]`.
 
 ### 3. Run a Cypher Query
 

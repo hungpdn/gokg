@@ -3,6 +3,7 @@ package graph
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -308,21 +309,30 @@ func (qb *QueryBuilder) GetSourceCode(nodeID string) (code string, err error) {
 	}()
 
 	var b strings.Builder
-	scanner := bufio.NewScanner(f)
+	reader := bufio.NewReader(f)
 	lineNum := 0
-	for scanner.Scan() {
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return "", fmt.Errorf("error reading file %s: %w", filePath, readErr)
+		}
+		if readErr == io.EOF && line == "" {
+			break
+		}
+
 		lineNum++
 		if lineNum >= lines[0] && lineNum <= lines[1] {
-			b.WriteString(scanner.Text())
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			b.WriteString(line)
 			b.WriteByte('\n')
 		}
 		if lineNum > lines[1] {
 			break
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading file %s: %w", filePath, err)
+		if readErr == io.EOF {
+			break
+		}
 	}
 
 	return b.String(), nil
@@ -497,14 +507,35 @@ func (qb *QueryBuilder) SearchNodes(query string) ([]*parser.Node, error) {
 			continue
 		}
 		if containsCaseInsensitive(pNode.Name, lowerQuery, asciiQuery) || containsCaseInsensitive(pNode.ID, lowerQuery, asciiQuery) {
-			results = append(results, pNode)
-			if len(results) >= maxSearchResults {
-				break
-			}
+			results = appendBoundedNodeResult(results, pNode, maxSearchResults)
 		}
 	}
 
 	return results, nil
+}
+
+func appendBoundedNodeResult(results []*parser.Node, node *parser.Node, limit int) []*parser.Node {
+	if node == nil || limit <= 0 {
+		return results
+	}
+
+	insertAt := sort.Search(len(results), func(i int) bool {
+		return results[i].ID >= node.ID
+	})
+	if insertAt < len(results) && results[insertAt].ID == node.ID {
+		return results
+	}
+	if len(results) == limit && insertAt >= limit {
+		return results
+	}
+
+	results = append(results, nil)
+	copy(results[insertAt+1:], results[insertAt:])
+	results[insertAt] = node
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results
 }
 
 func containsCaseInsensitive(s string, lowerQuery string, asciiQuery bool) bool {

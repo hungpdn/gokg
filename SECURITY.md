@@ -30,3 +30,4 @@ You can expect an initial acknowledgement within 7 days for actionable reports.
 ## HTTP MCP Exposure
 
 `gokg mcp --http` binds to `127.0.0.1:8080` by default and does not provide built-in authentication. Treat it as a local trusted-client endpoint. Do not bind it to a public interface unless another trusted layer provides access control.
+Browser CORS requests are accepted only from loopback origins, which prevents arbitrary websites from reading graph or source-code responses from a locally running server.

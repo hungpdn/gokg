@@ -196,3 +196,9 @@ func TestExecuteCypherLimitReturnsProjectedRows(t *testing.T) {
 		assert.Contains(t, row, "n.Name")
 	}
 }
+
+func TestCypherResultCapacityCapsPreallocation(t *testing.T) {
+	assert.Equal(t, 0, cypherResultCapacity(0))
+	assert.Equal(t, 10, cypherResultCapacity(10))
+	assert.Equal(t, maxCypherResultPrealloc, cypherResultCapacity(1_000_000_000))
+}

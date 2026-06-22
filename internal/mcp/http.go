@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -67,7 +69,10 @@ func (s *Server) HTTPHandler(path string) http.Handler {
 }
 
 func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
-	setHTTPHeaders(w)
+	if !setHTTPHeaders(w, r) {
+		writeHTTPError(w, nil, -32600, "Origin not allowed", http.StatusForbidden)
+		return
+	}
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -112,7 +117,10 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	setHTTPHeaders(w)
+	if !setHTTPHeaders(w, r) {
+		writeHTTPError(w, nil, -32600, "Origin not allowed", http.StatusForbidden)
+		return
+	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -128,11 +136,39 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func setHTTPHeaders(w http.ResponseWriter) {
+func setHTTPHeaders(w http.ResponseWriter, r *http.Request) bool {
 	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id")
+	h.Add("Vary", "Origin")
+
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	if !isAllowedHTTPOrigin(origin) {
+		return false
+	}
+
+	h.Set("Access-Control-Allow-Origin", origin)
+	return true
+}
+
+func isAllowedHTTPOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func writeHTTPError(w http.ResponseWriter, id interface{}, code int, message string, status int) {

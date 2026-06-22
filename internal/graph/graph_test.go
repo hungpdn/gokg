@@ -3,6 +3,8 @@ package graph
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -333,6 +335,42 @@ func TestSearchNodesCaseInsensitive(t *testing.T) {
 	results, err = g.Query().SearchNodes("ACME/SERVICE")
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
+}
+
+func TestSearchNodesReturnsDeterministicBoundedResults(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	for _, id := range []string{"node-c", "node-a", "node-b"} {
+		_, err := g.AddNode(ctx, &parser.Node{ID: id, Type: parser.NodeTypeFunc, Name: "Match"})
+		require.NoError(t, err)
+	}
+
+	results, err := g.Query().SearchNodes("match")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node-a", "node-b", "node-c"}, graphNodeIDs(results))
+}
+
+func TestGetSourceCodeHandlesLongGeneratedLines(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	filePath := filepath.Join(t.TempDir(), "generated.go")
+	longLine := "package generated // " + strings.Repeat("x", 128*1024)
+	require.NoError(t, os.WriteFile(filePath, []byte(longLine), 0o644))
+
+	_, err := g.AddNode(ctx, &parser.Node{
+		ID:       "generated.LongLine",
+		Type:     parser.NodeTypeFunc,
+		Name:     "LongLine",
+		FilePath: filePath,
+		Lines:    [2]int{1, 1},
+	})
+	require.NoError(t, err)
+
+	code, err := g.Query().GetSourceCode("generated.LongLine")
+	require.NoError(t, err)
+	assert.Equal(t, longLine+"\n", code)
 }
 
 func TestFindPathTreatsRemovedNodesAsMissing(t *testing.T) {

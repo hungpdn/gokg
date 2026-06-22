@@ -117,8 +117,13 @@ func estimateNodeBytes(node *parser.Node) int64 {
 }
 
 func estimateEdgeBytes(edge *parser.Edge) int64 {
-	return int64(unsafe.Sizeof(*edge)) +
+	size := int64(unsafe.Sizeof(*edge)) +
 		int64(len(edge.From)+len(edge.To)+len(edge.Type)+len(edge.RepoID))
+	size += int64(len(edge.Occurrences)) * int64(unsafe.Sizeof(parser.EdgeOccurrence{}))
+	for _, occurrence := range edge.Occurrences {
+		size += int64(len(occurrence.FilePath))
+	}
+	return size
 }
 
 func topPackageStats(nodesByPackage map[string]int, limit int) []PackageStat {

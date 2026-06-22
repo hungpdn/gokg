@@ -18,19 +18,36 @@ func TestHTTPHandlerInitialize(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	req := httptest.NewRequest(http.MethodPost, "/mcp", body)
+	req.Header.Set("Origin", "http://localhost:3000")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "http://localhost:3000", rec.Header().Get("Access-Control-Allow-Origin"))
 
 	var res Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
 	assert.Equal(t, "2.0", res.JSONRPC)
 	assert.Nil(t, res.Error)
 	require.NotNil(t, res.Result)
+}
+
+func TestHTTPHandlerRejectsNonLocalBrowserOrigin(t *testing.T) {
+	server := NewServer(graph.NewGraph(nil))
+	body := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", body)
+	req.Header.Set("Origin", "https://example.com")
+	rec := httptest.NewRecorder()
+
+	server.HTTPHandler("/mcp").ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var res Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.NotNil(t, res.Error)
+	assert.Equal(t, "Origin not allowed", res.Error.Message)
 }
 
 func TestHTTPHandlerParseError(t *testing.T) {
