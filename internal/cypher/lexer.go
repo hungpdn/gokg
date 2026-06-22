@@ -127,8 +127,13 @@ func (l *Lexer) NextToken() Token {
 			tok = Token{Type: TokenIllegal, Literal: string(l.ch)}
 		}
 	case '"', '\'':
-		tok.Type = TokenString
-		tok.Literal = l.readString(l.ch)
+		literal, ok := l.readString(l.ch)
+		if !ok {
+			tok = Token{Type: TokenIllegal, Literal: literal}
+		} else {
+			tok.Type = TokenString
+			tok.Literal = literal
+		}
 	case 0:
 		tok.Literal = ""
 		tok.Type = TokenEOF
@@ -158,15 +163,18 @@ func (l *Lexer) readIdentifier() string {
 	return l.input[position:l.position]
 }
 
-func (l *Lexer) readString(quote rune) string {
+func (l *Lexer) readString(quote rune) (string, bool) {
 	position := l.position + 1
 	for {
 		l.readChar()
-		if l.ch == quote || l.ch == 0 {
+		if l.ch == quote {
 			break
 		}
+		if l.ch == 0 {
+			return l.input[position:l.position], false
+		}
 	}
-	return l.input[position:l.position]
+	return l.input[position:l.position], true
 }
 
 func (l *Lexer) readNumber() string {

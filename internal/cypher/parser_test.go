@@ -95,6 +95,26 @@ func TestParseQuery_RejectsTrailingTokens(t *testing.T) {
 	assert.Contains(t, err.Error(), "unexpected token after query")
 }
 
+func TestParseQuery_RejectsInvalidLimit(t *testing.T) {
+	input := `MATCH (n:FUNC) RETURN n LIMIT 0`
+	l := NewLexer(input)
+	p := NewParser(l)
+
+	_, err := p.ParseQuery()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "LIMIT must be greater than 0")
+}
+
+func TestParseQuery_RejectsUnterminatedString(t *testing.T) {
+	input := `MATCH (n:FUNC) WHERE n.Name = "main RETURN n`
+	l := NewLexer(input)
+	p := NewParser(l)
+
+	_, err := p.ParseQuery()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected string value")
+}
+
 func TestParseQuery_AllowsAnonymousAnyDirectionEdge(t *testing.T) {
 	input := `MATCH (a)--(b) RETURN b`
 	l := NewLexer(input)

@@ -373,6 +373,40 @@ func TestGetSourceCodeHandlesLongGeneratedLines(t *testing.T) {
 	assert.Equal(t, longLine+"\n", code)
 }
 
+func TestGetSourceCodeRejectsInvalidLineRanges(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+
+	filePath := filepath.Join(t.TempDir(), "main.go")
+	require.NoError(t, os.WriteFile(filePath, []byte("package main\n"), 0o644))
+
+	for _, tt := range []struct {
+		name  string
+		lines [2]int
+		want  string
+	}{
+		{name: "missing", lines: [2]int{}, want: "no line range info"},
+		{name: "negative start", lines: [2]int{-1, 1}, want: "no line range info"},
+		{name: "end before start", lines: [2]int{2, 1}, want: "invalid line range"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			nodeID := "main." + strings.ReplaceAll(tt.name, " ", "_")
+			_, err := g.AddNode(ctx, &parser.Node{
+				ID:       nodeID,
+				Type:     parser.NodeTypeFunc,
+				Name:     tt.name,
+				FilePath: filePath,
+				Lines:    tt.lines,
+			})
+			require.NoError(t, err)
+
+			_, err = g.Query().GetSourceCode(nodeID)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestFindPathTreatsRemovedNodesAsMissing(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

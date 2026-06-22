@@ -230,7 +230,7 @@ When connected through `gokg mcp`, GoKG exposes 9 tools:
 GoKG includes a lightweight Cypher subset for read-only graph exploration.
 
 ```cypher
-MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
+MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <positive n>]
 ```
 
 **Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `CONSTANT`, `VARIABLE`, `TYPE_ALIAS`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`

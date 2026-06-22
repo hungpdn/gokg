@@ -294,8 +294,11 @@ func (qb *QueryBuilder) GetSourceCode(nodeID string) (code string, err error) {
 		return "", fmt.Errorf("node %s has no file path", nodeID)
 	}
 
-	if lines[0] == 0 && lines[1] == 0 {
+	if lines[0] <= 0 || lines[1] <= 0 {
 		return "", fmt.Errorf("node %s has no line range info", nodeID)
+	}
+	if lines[1] < lines[0] {
+		return "", fmt.Errorf("node %s has invalid line range: %d-%d", nodeID, lines[0], lines[1])
 	}
 
 	f, err := os.Open(filePath)

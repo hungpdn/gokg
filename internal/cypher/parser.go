@@ -306,6 +306,9 @@ func (p *Parser) parseLimit() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if val <= 0 {
+		return 0, fmt.Errorf("LIMIT must be greater than 0")
+	}
 	p.nextToken()
 	return val, nil
 }

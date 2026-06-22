@@ -7,13 +7,13 @@ GoKG supports a strict, read-only subset of Cypher for querying the in-memory Go
 ## Syntax
 
 ```cypher
-MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <n>]
+MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <positive n>]
 ```
 
 - `MATCH` is required and describes the graph pattern.
 - `WHERE` is optional and filters matched aliases by properties.
 - `RETURN` is required and selects aliases or alias properties.
-- `LIMIT` is optional and must come after `RETURN`.
+- `LIMIT` is optional, must be a positive integer, and must come after `RETURN`.
 - A line whose first non-whitespace characters are `--` is treated as a comment.
 
 Keywords, node types, edge types, operators, and property names are matched case-insensitively. Result keys preserve the property casing used in `RETURN`.
@@ -271,7 +271,7 @@ The response is Markdown containing the original query and a JSON array of resul
 1. Always include `MATCH` and `RETURN`.
 2. Prefer explicit aliases for every node and edge you need to filter or return.
 3. Use `CONTAINS` for fuzzy discovery, then tighten with `=` once you know the exact ID.
-4. Use `LIMIT` on exploratory queries.
+4. Use a positive `LIMIT` on exploratory queries.
 5. Use `search_nodes` first when you do not know the exact node name or ID.
 6. Use `find_path` for shortest paths; this Cypher subset is single-hop only.
 7. Treat validation errors as feedback and regenerate the query with the listed aliases/properties/types.
@@ -297,7 +297,7 @@ Example workflow:
 | `MATCH` single-hop patterns | Yes |
 | `WHERE` with `=`, `!=`, `CONTAINS`, `AND` | Yes |
 | `RETURN` aliases and properties | Yes |
-| `LIMIT` | Yes |
+| `LIMIT` with positive integers | Yes |
 | Line comments with `--` | Yes |
 | Multi-hop patterns | No, use `find_path` |
 | `OR` conditions | No |

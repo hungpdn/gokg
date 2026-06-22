@@ -313,6 +313,8 @@ func main() {
 	assert.True(t, hasEdge(result, interfaceID, interfaceMethodID, EdgeTypeContains), "MyInterface contains DoSomething signature")
 	assert.True(t, hasEdge(result, structID, interfaceID, EdgeTypeImplements), "MyStruct implements MyInterface")
 	assert.True(t, hasEdge(result, funcTypeID, interfaceID, EdgeTypeImplements), "MyFunc implements MyInterface")
+	assert.Len(t, edgesBy(result, structID, interfaceID, EdgeTypeImplements), 1)
+	assert.Len(t, edgesBy(result, funcTypeID, interfaceID, EdgeTypeImplements), 1)
 
 	// Verify CALLS edges
 	mainID := "example.com/test.main"

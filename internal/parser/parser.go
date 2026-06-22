@@ -533,9 +533,16 @@ func (p *Parser) resolveImplementsEdges(pkgs []*packages.Package, result *ParseR
 		collect(pkg)
 	}
 
+	seenImplEdges := make(map[edgeIdentityKey]bool)
 	for _, s := range structs {
 		for _, i := range ifaces {
 			if types.Implements(s.t, i.t) {
+				key := edgeIdentityKey{from: s.id, to: i.id, edgeType: EdgeTypeImplements}
+				if seenImplEdges[key] {
+					continue
+				}
+				seenImplEdges[key] = true
+
 				edge := NewEdge()
 				edge.From = s.id
 				edge.To = i.id
