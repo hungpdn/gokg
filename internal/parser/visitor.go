@@ -667,8 +667,9 @@ func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mut
 
 func (p *Parser) addTypeReferenceEdgesFromTypes(from string, mu *sync.Mutex, result *ParseResult, typs ...types.Type) {
 	typeIDs := make(map[string]string)
+	visited := make(map[types.Type]struct{})
 	for _, typ := range typs {
-		collectGraphTypeIDs(typ, typeIDs)
+		collectGraphTypeIDs(typ, typeIDs, visited)
 	}
 
 	for typeID, pkgPath := range typeIDs {
@@ -1029,10 +1030,14 @@ func graphTypeString(typ types.Type) string {
 	})
 }
 
-func collectGraphTypeIDs(typ types.Type, out map[string]string) {
+func collectGraphTypeIDs(typ types.Type, out map[string]string, visited map[types.Type]struct{}) {
 	if typ == nil {
 		return
 	}
+	if _, ok := visited[typ]; ok {
+		return
+	}
+	visited[typ] = struct{}{}
 
 	if typeID, pkgPath, ok := graphTypeID(typ); ok {
 		out[typeID] = pkgPath
@@ -1040,44 +1045,44 @@ func collectGraphTypeIDs(typ types.Type, out map[string]string) {
 
 	switch t := typ.(type) {
 	case *types.Pointer:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Slice:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Array:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Chan:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Map:
-		collectGraphTypeIDs(t.Key(), out)
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Key(), out, visited)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Struct:
 		for i := 0; i < t.NumFields(); i++ {
-			collectGraphTypeIDs(t.Field(i).Type(), out)
+			collectGraphTypeIDs(t.Field(i).Type(), out, visited)
 		}
 	case *types.Interface:
 		for i := 0; i < t.NumEmbeddeds(); i++ {
-			collectGraphTypeIDs(t.EmbeddedType(i), out)
+			collectGraphTypeIDs(t.EmbeddedType(i), out, visited)
 		}
 		for i := 0; i < t.NumExplicitMethods(); i++ {
-			collectGraphTypeIDs(t.ExplicitMethod(i).Type(), out)
+			collectGraphTypeIDs(t.ExplicitMethod(i).Type(), out, visited)
 		}
 	case *types.Signature:
 		if t.Recv() != nil {
-			collectGraphTypeIDs(t.Recv().Type(), out)
+			collectGraphTypeIDs(t.Recv().Type(), out, visited)
 		}
-		collectTupleGraphTypeIDs(t.Params(), out)
-		collectTupleGraphTypeIDs(t.Results(), out)
+		collectTupleGraphTypeIDs(t.Params(), out, visited)
+		collectTupleGraphTypeIDs(t.Results(), out, visited)
 	case *types.Tuple:
-		collectTupleGraphTypeIDs(t, out)
+		collectTupleGraphTypeIDs(t, out, visited)
 	}
 }
 
-func collectTupleGraphTypeIDs(tuple *types.Tuple, out map[string]string) {
+func collectTupleGraphTypeIDs(tuple *types.Tuple, out map[string]string, visited map[types.Type]struct{}) {
 	if tuple == nil {
 		return
 	}
 	for i := 0; i < tuple.Len(); i++ {
-		collectGraphTypeIDs(tuple.At(i).Type(), out)
+		collectGraphTypeIDs(tuple.At(i).Type(), out, visited)
 	}
 }
 

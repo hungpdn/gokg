@@ -232,6 +232,51 @@ func TestReady(t *testing.T) {
 	assert.True(t, hasEdge(result, testReadyID, readyID, EdgeTypeCalls))
 }
 
+func TestParseWorkspaceHandlesRecursiveTypes(t *testing.T) {
+	withGoBuildCache(t)
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/recursive\n\ngo 1.25\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), `package recursive
+
+type Registry map[string]func(Registry) Registry
+
+type Node struct {
+	Next     *Node
+	Children map[string]*Node
+	Registry Registry
+}
+
+type Walker interface {
+	Walk(Walker) map[string]func(Walker)
+}
+
+func Use(r Registry, n *Node, w Walker) Registry {
+	return r
+}
+`)
+
+	parser := NewParser("example.com/recursive", "test-repo")
+	result, err := parser.ParseWorkspace(context.Background(), dir)
+	require.NoError(t, err)
+
+	registryID := "example.com/recursive.Registry"
+	nodeID := "example.com/recursive.Node"
+	walkerID := "example.com/recursive.Walker"
+	useID := "example.com/recursive.Use"
+
+	nodes := nodesByID(result)
+	require.NotNil(t, nodes[registryID])
+	require.NotNil(t, nodes[nodeID])
+	require.NotNil(t, nodes[walkerID])
+	require.NotNil(t, nodes[useID])
+
+	assert.True(t, hasEdge(result, nodeID, registryID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, useID, registryID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, useID, nodeID, EdgeTypeReferences))
+	assert.True(t, hasEdge(result, useID, walkerID, EdgeTypeReferences))
+}
+
 func TestParseWorkspaceAddsWorkspaceRepoHierarchy(t *testing.T) {
 	withGoBuildCache(t)
 
