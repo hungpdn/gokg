@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -79,34 +78,21 @@ func TestWatcher_DebounceAndUpdate(t *testing.T) {
 	w.delay = 10 * time.Millisecond
 	w.mu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	called := false
+	updateCalls := make(chan struct{}, 4)
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
-		defer wg.Done()
-		called = true
-		return update(updateCtx)
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
 	})
 
 	// Manually trigger debounce for the directory
 	w.debounce(ctx, dir)
 
 	// Wait for the debounce to execute the runUpdate callback
-	c := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(c)
-	}()
-
-	select {
-	case <-c:
-		if !called {
-			t.Errorf("expected runUpdate to be called")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timeout waiting for debounce to trigger runUpdate")
-	}
+	waitForUpdateCalls(t, updateCalls, 2, 2*time.Second)
 }
 
 func TestWatcher_Start_FSNotify(t *testing.T) {
@@ -133,14 +119,14 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	w.delay = 10 * time.Millisecond
 	w.mu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	called := false
+	updateCalls := make(chan struct{}, 4)
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
-		defer wg.Done()
-		called = true
-		return update(updateCtx)
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
 	})
 
 	if err := w.Start(ctx); err != nil {
@@ -155,20 +141,7 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	// speed of go/packages on Windows CI.
 	requireNoError(t, os.Remove(mainGoPath))
 
-	c := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(c)
-	}()
-
-	select {
-	case <-c:
-		if !called {
-			t.Errorf("expected runUpdate to be called by fsnotify event")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("timeout waiting for fsnotify event to trigger runUpdate")
-	}
+	waitForUpdateCalls(t, updateCalls, 2, 3*time.Second)
 }
 
 func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
@@ -336,6 +309,21 @@ func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func waitForUpdateCalls(t *testing.T, updateCalls <-chan struct{}, want int, timeout time.Duration) {
+	t.Helper()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for i := 0; i < want; i++ {
+		select {
+		case <-updateCalls:
+		case <-timer.C:
+			t.Fatalf("timeout waiting for watcher update callback %d of %d", i+1, want)
+		}
 	}
 }
 
