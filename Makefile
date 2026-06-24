@@ -21,6 +21,13 @@ build-debug:
 test:
 	$(GO) test -v ./...
 
+test-race:
+	$(GO) test -v -race ./...
+
+test-coverage:
+	$(GO) test -v -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
 format:
 	$(GO) fmt ./...
 
@@ -34,6 +41,9 @@ clean:
 	$(GO) clean
 	rm -rf bin/
 	rm -rf .gokg/
+	rm -rf dist/
+	rm -f coverage.out coverage.html
+	rm -f *.dot
 
 install:
 	$(GO) install $(GO_BUILD_FLAGS) -ldflags="$(GO_LDFLAGS)" ./cmd/gokg
