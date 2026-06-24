@@ -51,7 +51,7 @@ func (p *Parser) WithTests(includeTests bool) *Parser {
 func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedModule,
 		Context: ctx,
 		Dir:     dir,
 		Tests:   p.IncludeTests,
@@ -411,7 +411,7 @@ func isInsideWorkspace(rel string) bool {
 func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedModule,
 		Context: ctx,
 		Dir:     dir,
 		Tests:   p.IncludeTests,
@@ -477,7 +477,7 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 	cfg := &packages.Config{
 		// NeedDeps intentionally omitted — avoids loading all transitive deps.
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedModule,
 		Context: ctx,
 		Dir:     dir,
 		Tests:   p.IncludeTests,

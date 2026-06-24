@@ -194,7 +194,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 		},
 		{
 			"name":        "get_source_code",
-			"description": "Reads the actual Go source code of a function, struct, or interface node from disk",
+			"description": "Reads the actual Go source code of a function, type, or route registration node from disk",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -272,6 +272,7 @@ NODE TYPES (use in patterns as :TYPE):
   INTERFACE  – an interface type
   CHANNEL    – a channel variable (e.g. chan int)
   GOROUTINE  – a goroutine spawned with 'go'
+  ROUTE      – an HTTP route registration (e.g. GET /healthz)
   BOUNDARY   – an external dependency (outside the module)
   REPO       – a repository root (multi-repo workspace)
   WORKSPACE  – a multi-repo workspace root
@@ -286,6 +287,7 @@ EDGE TYPES (use in patterns as :TYPE):
   SPAWNS         – function spawns a goroutine
   SENDS_TO       – function sends to a channel
   RECEIVES_FROM  – function receives from a channel
+  REGISTERS_ROUTE – function, method, or goroutine registers an HTTP route
 
 NODE PROPERTIES (use in WHERE and RETURN):
   Name      – short identifier (e.g. "ParseWorkspace", "Storage")
@@ -322,6 +324,8 @@ EXAMPLES:
   MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name LIMIT 20
   MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name LIMIT 20
   MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name LIMIT 20
+  MATCH (owner)-[r:REGISTERS_ROUTE]->(route:ROUTE) RETURN owner.Name, route.Name LIMIT 50
+  MATCH (route:ROUTE)-[r:REFERENCES]->(handler) RETURN route.Name, handler.Name LIMIT 50
   MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n LIMIT 20
 
 Always include MATCH, RETURN, and a positive LIMIT after RETURN.`,

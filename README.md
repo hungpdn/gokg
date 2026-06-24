@@ -26,8 +26,9 @@ GoKG is intentionally focused on Go. Choose a polyglot or visualization-first to
 
 ## Key Features
 
-- **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, external boundaries, repos, and workspaces.
-- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
+- **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, HTTP routes, external boundaries, repos, and workspaces.
+- **HTTP route topology**: Detects static `net/http` and Gin registrations, including static Gin group prefixes, and links routes to their registrars and handlers.
+- **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`, and `REGISTERS_ROUTE`.
 - **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` and `HTTP` for IDEs and coding agents.
 - **Real-time incremental updates**: Optional file watcher reparses changed packages, refreshes repository structure, and merges updates into the live graph.
@@ -223,9 +224,9 @@ GoKG includes a lightweight Cypher subset for read-only graph exploration.
 MATCH <pattern> [WHERE <conditions>] RETURN <items> [LIMIT <positive n>]
 ```
 
-**Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `CONSTANT`, `VARIABLE`, `TYPE_ALIAS`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `BOUNDARY`, `REPO`, `WORKSPACE`
+**Node types:** `PACKAGE`, `FILE`, `FOLDER`, `FUNC`, `METHOD`, `CONSTANT`, `VARIABLE`, `TYPE_ALIAS`, `STRUCT`, `INTERFACE`, `CHANNEL`, `GOROUTINE`, `ROUTE`, `BOUNDARY`, `REPO`, `WORKSPACE`
 
-**Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`
+**Edge types:** `CALLS`, `CONTAINS`, `IMPORTS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`, `REGISTERS_ROUTE`
 
 **Node properties:** `Name`, `ID`, `PkgPath`, `FilePath`, `Type`, `RepoID`
 
@@ -244,10 +245,14 @@ MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = "Analyze" AND b.Type != "BOUNDARY" 
 MATCH (caller)-[r:CALLS]->(target:FUNC) WHERE target.Name = "AddEdge" RETURN caller.Name, caller.ID LIMIT 30
 MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) WHERE i.Name = "Storage" RETURN s.Name, s.PkgPath
 MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) RETURN f.Name, c.Name
+MATCH (owner)-[r:REGISTERS_ROUTE]->(route:ROUTE) RETURN owner.Name, route.Name, route.FilePath LIMIT 50
+MATCH (route:ROUTE)-[r:REFERENCES]->(handler) RETURN route.Name, handler.Name LIMIT 50
 MATCH (a)-[r]-(b) WHERE a.Name = "worker" RETURN a.Name, r.Type, b.Name, b.Type LIMIT 30
 ```
 
 Full reference: [docs/cypher-reference.md](docs/cypher-reference.md)
+
+Run `gokg analyze --rebuild` after upgrading an existing database to populate route nodes.
 
 ---
 

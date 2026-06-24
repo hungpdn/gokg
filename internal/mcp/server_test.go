@@ -170,8 +170,17 @@ func TestHandleListTools(t *testing.T) {
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
+	var cypherDescription string
+	var sourceDescription string
 	for _, tool := range tools {
-		toolNames[tool["name"].(string)] = true
+		name := tool["name"].(string)
+		toolNames[name] = true
+		if name == "execute_cypher" {
+			cypherDescription = tool["description"].(string)
+		}
+		if name == "get_source_code" {
+			sourceDescription = tool["description"].(string)
+		}
 	}
 	assert.True(t, toolNames["get_implementations"])
 	assert.True(t, toolNames["get_source_code"])
@@ -179,6 +188,9 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, toolNames["get_concurrency_graph"])
 	assert.True(t, toolNames["get_repository_structure"])
 	assert.True(t, toolNames["execute_cypher"])
+	assert.Contains(t, cypherDescription, "ROUTE")
+	assert.Contains(t, cypherDescription, "REGISTERS_ROUTE")
+	assert.Contains(t, sourceDescription, "route registration")
 }
 
 func TestHandleCallToolError(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Package, mu *sync.Mutex, result *ParseResult) error {
 	createdChannels := make(map[string]bool)
 	createdBoundaryNodes := make(map[string]bool)
+	createdRoutes := make(map[string]bool)
 	pkgPath := packageGraphPath(pkg)
 
 	for _, file := range pkg.Syntax {
@@ -71,7 +72,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					}
 				}
 			case *ast.FuncDecl:
-				p.extractFuncDecl(pkg, filename, node, createdChannels, createdBoundaryNodes, mu, result)
+				p.extractFuncDecl(pkg, filename, node, createdChannels, createdBoundaryNodes, createdRoutes, mu, result)
 			}
 		}
 	}
@@ -243,6 +244,7 @@ func (p *Parser) extractFuncDecl(
 	node *ast.FuncDecl,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -294,7 +296,18 @@ func (p *Parser) extractFuncDecl(
 
 	p.addTypeReferenceEdges(funcID, sig, mu, result)
 	if node.Body != nil {
-		p.inspectFunctionBody(pkg, node.Body, funcID, filename, createdChannels, createdBoundaryNodes, mu, result)
+		p.inspectFunctionBody(
+			pkg,
+			node.Body,
+			funcID,
+			filename,
+			createdChannels,
+			createdBoundaryNodes,
+			createdRoutes,
+			newRouteScope(),
+			mu,
+			result,
+		)
 	}
 }
 
@@ -305,6 +318,8 @@ func (p *Parser) inspectFunctionBody(
 	filename string,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
+	routeScope *routeScope,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -322,22 +337,64 @@ func (p *Parser) inspectFunctionBody(
 				return false
 			}
 			if node.Body != nil {
-				p.inspectFunctionBody(pkg, node.Body, currentFunc, filename, createdChannels, createdBoundaryNodes, mu, result)
+				p.inspectFunctionBody(
+					pkg,
+					node.Body,
+					currentFunc,
+					filename,
+					createdChannels,
+					createdBoundaryNodes,
+					createdRoutes,
+					routeScope.clone(),
+					mu,
+					result,
+				)
 			}
 			return false
 		case *ast.GoStmt:
-			p.addGoroutineEdges(pkg, node, currentFunc, filename, createdChannels, createdBoundaryNodes, goCalls, goFuncLits, mu, result)
+			p.addGoroutineEdges(
+				pkg,
+				node,
+				currentFunc,
+				filename,
+				createdChannels,
+				createdBoundaryNodes,
+				createdRoutes,
+				routeScope,
+				goCalls,
+				goFuncLits,
+				mu,
+				result,
+			)
+		case *ast.AssignStmt:
+			routeScope.applyAssign(pkg, node)
+		case *ast.DeclStmt:
+			routeScope.applyDecl(pkg, node)
+		case *ast.IfStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+			routeScope.markControlFlowAssignments(pkg, node.Else)
+		case *ast.ForStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+			routeScope.markControlFlowAssignments(pkg, node.Post)
+		case *ast.SwitchStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+		case *ast.TypeSwitchStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+		case *ast.SelectStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
 		case *ast.CallExpr:
 			if !goCalls[node] {
 				p.addCallEdge(pkg, currentFunc, node, createdBoundaryNodes, mu, result)
 				p.addChannelArgumentFlowEdges(pkg, node, currentFunc, filename, createdChannels, mu, result)
 				p.addFuncLiteralChannelArgumentFlowEdges(pkg, node, currentFunc, currentFunc, filename, createdChannels, mu, result)
+				p.addRouteEdges(pkg, currentFunc, filename, node, createdBoundaryNodes, createdRoutes, routeScope, mu, result)
 			}
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(currentFunc, typ, mu, result)
 			p.addInstantiationEdge(currentFunc, typ, edgeOccurrence(pkg, node), mu, result)
 		case *ast.RangeStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
 			chanNodeID := p.resolveChannelNode(pkg, node.X, currentFunc, filename, createdChannels, mu, result)
 			if chanNodeID != "" {
 				appendEdge(mu, result, &Edge{
@@ -565,6 +622,8 @@ func (p *Parser) addGoroutineEdges(
 	filename string,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
+	routeScope *routeScope,
 	goCalls map[*ast.CallExpr]bool,
 	goFuncLits map[*ast.FuncLit]bool,
 	mu *sync.Mutex,
@@ -612,9 +671,21 @@ func (p *Parser) addGoroutineEdges(
 	}
 	p.addChannelArgumentFlowEdges(pkg, node.Call, currentFunc, filename, createdChannels, mu, result)
 	p.addFuncLiteralChannelArgumentFlowEdges(pkg, node.Call, goroutineID, currentFunc, filename, createdChannels, mu, result)
+	p.addRouteEdges(pkg, goroutineID, filename, node.Call, createdBoundaryNodes, createdRoutes, routeScope, mu, result)
 
 	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok && fun.Body != nil {
-		p.inspectFunctionBody(pkg, fun.Body, goroutineID, filename, createdChannels, createdBoundaryNodes, mu, result)
+		p.inspectFunctionBody(
+			pkg,
+			fun.Body,
+			goroutineID,
+			filename,
+			createdChannels,
+			createdBoundaryNodes,
+			createdRoutes,
+			routeScope.clone(),
+			mu,
+			result,
+		)
 	}
 }
 
@@ -708,7 +779,7 @@ func (p *Parser) addExpressionReferenceEdges(
 		switch node := n.(type) {
 		case *ast.FuncLit:
 			if node.Body != nil {
-				p.inspectFunctionBody(pkg, node.Body, from, filename, createdChannels, createdBoundaryNodes, mu, result)
+				p.inspectFunctionBody(pkg, node.Body, from, filename, createdChannels, createdBoundaryNodes, nil, nil, mu, result)
 			}
 			return false
 		case *ast.CallExpr:

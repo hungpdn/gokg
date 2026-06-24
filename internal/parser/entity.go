@@ -20,6 +20,7 @@ const (
 	NodeTypeTypeAlias NodeType = "TYPE_ALIAS"
 	NodeTypeChannel   NodeType = "CHANNEL"
 	NodeTypeGoroutine NodeType = "GOROUTINE"
+	NodeTypeRoute     NodeType = "ROUTE"
 	NodeTypeBoundary  NodeType = "BOUNDARY" // External package/func
 	NodeTypeRepo      NodeType = "REPO"
 	NodeTypeWorkspace NodeType = "WORKSPACE"
@@ -39,15 +40,16 @@ type Node struct {
 type EdgeType string
 
 const (
-	EdgeTypeCalls        EdgeType = "CALLS"
-	EdgeTypeImplements   EdgeType = "IMPLEMENTS"
-	EdgeTypeImports      EdgeType = "IMPORTS"
-	EdgeTypeReferences   EdgeType = "REFERENCES"
-	EdgeTypeInstantiates EdgeType = "INSTANTIATES"
-	EdgeTypeSpawns       EdgeType = "SPAWNS"
-	EdgeTypeSendsTo      EdgeType = "SENDS_TO"
-	EdgeTypeReceivesFrom EdgeType = "RECEIVES_FROM"
-	EdgeTypeContains     EdgeType = "CONTAINS" // e.g. Package contains File, File contains Func
+	EdgeTypeCalls          EdgeType = "CALLS"
+	EdgeTypeImplements     EdgeType = "IMPLEMENTS"
+	EdgeTypeImports        EdgeType = "IMPORTS"
+	EdgeTypeReferences     EdgeType = "REFERENCES"
+	EdgeTypeInstantiates   EdgeType = "INSTANTIATES"
+	EdgeTypeSpawns         EdgeType = "SPAWNS"
+	EdgeTypeSendsTo        EdgeType = "SENDS_TO"
+	EdgeTypeReceivesFrom   EdgeType = "RECEIVES_FROM"
+	EdgeTypeContains       EdgeType = "CONTAINS" // e.g. Package contains File, File contains Func
+	EdgeTypeRegistersRoute EdgeType = "REGISTERS_ROUTE"
 )
 
 // Edge represents a relation between two nodes
