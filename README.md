@@ -13,6 +13,17 @@ Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understa
 
 ---
 
+## Why it matters?
+
+1. **Go toolchain-aware semantics**: Uses `go/packages`, `go/ast`, and `go/types` to resolve package identities, method receivers, type references, and implicit interface implementations.
+2. **Concurrency-aware relationships**: Models goroutine spawning and channel send/receive relationships alongside calls, imports, and references.
+3. **Multi-repository context**: Combines per-repository graphs into one workspace query surface and preserves resolvable cross-repository edges.
+4. **Local & Pure Go**: Runs as a static Go binary with embedded BadgerDB storage. No hosted service, external graph database, embedding model, or API key is required.
+
+GoKG is intentionally focused on Go. Choose a polyglot or visualization-first tool when language breadth is the priority; choose GoKG when Go semantics, concurrency, and architectural impact are the primary questions.
+
+---
+
 ## Key Features
 
 - **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, external boundaries, repos, and workspaces.
