@@ -214,6 +214,11 @@ MATCH (f:FILE)-[r:IMPORTS]->(pkg) WHERE f.Name CONTAINS "analyze" RETURN pkg.ID
 MATCH (folder:FOLDER)-[r:CONTAINS]->(child) RETURN folder.Name, child.Name, child.Type LIMIT 40
 ```
 
+For MCP clients that only need a repository tree, prefer the dedicated
+`get_repository_structure` tool. It returns a Markdown tree from the graph and
+accepts `repo_id`, `root`, `max_depth`, `include_packages`, and `include_files`
+arguments.
+
 ### Multi-Repo Workspaces
 
 ```cypher
@@ -264,6 +269,23 @@ When `gokg mcp` is running, a connected AI agent can call the `execute_cypher` t
 ```
 
 The response is Markdown containing the original query and a JSON array of result rows.
+
+For repository structure, agents can call `get_repository_structure` instead of
+writing Cypher:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "get_repository_structure",
+    "arguments": {
+      "max_depth": 4,
+      "include_packages": true,
+      "include_files": false
+    }
+  }
+}
+```
 
 ---
 

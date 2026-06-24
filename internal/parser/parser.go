@@ -146,7 +146,28 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 	if err != nil {
 		return fmt.Errorf("resolve workspace root: %w", err)
 	}
+	return p.appendRepositoryStructure(ctx, root, p.packageFolders(root, pkgs), result)
+}
 
+// BuildRepositoryStructure builds the physical folder tree and folder-to-package
+// containment edges for the repository root using already-known package
+// locations. The packageFolders map is keyed by slash-separated relative folder
+// path, with "." representing the repository root.
+func (p *Parser) BuildRepositoryStructure(ctx context.Context, dir string, packageFolders map[string]map[string]bool) (*ParseResult, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace root: %w", err)
+	}
+
+	result := &ParseResult{}
+	p.addWorkspaceHierarchy(result)
+	if err := p.appendRepositoryStructure(ctx, root, packageFolders, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (p *Parser) appendRepositoryStructure(ctx context.Context, root string, packageFolders map[string]map[string]bool, result *ParseResult) error {
 	folderIDs := make(map[string]bool)
 
 	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
@@ -157,10 +178,37 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 			return err
 		}
 		if !d.IsDir() {
+			name := d.Name()
+			if strings.HasSuffix(name, ".go") || ShouldSkipFile(name) {
+				return nil
+			}
+
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			folderRel := filepath.ToSlash(filepath.Dir(rel))
+
+			id := path
+			node := NewNode()
+			node.ID = id
+			node.Type = NodeTypeFile
+			node.Name = name
+			node.FilePath = path
+			node.RepoID = p.RepoID
+			result.Nodes = append(result.Nodes, node)
+
+			edge := NewEdge()
+			edge.From = p.folderNodeID(folderRel)
+			edge.To = id
+			edge.Type = EdgeTypeContains
+			edge.RepoID = p.RepoID
+			result.Edges = append(result.Edges, edge)
 			return nil
 		}
 
-		if path != root && shouldSkipFolder(d.Name()) {
+		if path != root && ShouldSkipFolder(d.Name()) {
 			return filepath.SkipDir
 		}
 
@@ -201,11 +249,10 @@ func (p *Parser) buildFolderHierarchy(ctx context.Context, dir string, pkgs []*p
 		return fmt.Errorf("build folder hierarchy: %w", err)
 	}
 
-	packageFolders := p.packageFolders(root, pkgs)
-	for folderID, pkgPaths := range packageFolders {
+	for folderRel, pkgPaths := range packageFolders {
 		for pkgPath := range pkgPaths {
 			edge := NewEdge()
-			edge.From = folderID
+			edge.From = p.folderNodeID(folderRel)
 			edge.To = pkgPath
 			edge.Type = EdgeTypeContains
 			edge.RepoID = p.RepoID
@@ -250,11 +297,11 @@ func (p *Parser) packageFolders(root string, pkgs []*packages.Package) map[strin
 				continue
 			}
 
-			folderID := p.folderNodeID(filepath.ToSlash(relDir))
-			if packageFolders[folderID] == nil {
-				packageFolders[folderID] = make(map[string]bool)
+			relDir = filepath.ToSlash(relDir)
+			if packageFolders[relDir] == nil {
+				packageFolders[relDir] = make(map[string]bool)
 			}
-			packageFolders[folderID][pkgPath] = true
+			packageFolders[relDir][pkgPath] = true
 		}
 	}
 
@@ -275,8 +322,27 @@ func maxPackageWorkers(pkgCount int) int {
 	return workers
 }
 
-func shouldSkipFolder(name string) bool {
-	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".")
+func ShouldSkipFolder(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "vendor", "testdata", "node_modules":
+		return true
+	}
+	return false
+}
+
+func ShouldSkipFile(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		switch name {
+		case ".gitignore", ".dockerignore", ".env", ".golangci.yml":
+			return false
+		default:
+			return true // skip .DS_Store, .idea, etc.
+		}
+	}
+	return false
 }
 
 func WorkspaceNodeID(workspaceID string) string {

@@ -203,6 +203,97 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	}
 }
 
+func TestWatcher_AddsStructureForGoFileInNewFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	workerDir := filepath.Join(dir, "worker")
+	requireNoError(t, os.MkdirAll(workerDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(workerDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	w.updatePackage(ctx, workerDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	requireTreePath(t, tree, "worker", "testmodule/worker")
+}
+
+func TestWatcher_RemovesStructureForDeletedFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	workerDir := filepath.Join(dir, "worker")
+	requireNoError(t, os.MkdirAll(workerDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(workerDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	result, err := p.ParseWorkspace(ctx, dir)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, result))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	requireNoError(t, os.RemoveAll(workerDir))
+	w.removePathAndRefreshStructure(ctx, workerDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	if treeContainsID(tree, "testmodule/worker") || treeContainsName(tree, "worker") {
+		t.Fatalf("expected deleted worker folder/package to be absent from repository structure")
+	}
+	if _, err := g.Query().GetDependencies("testmodule/worker.Work"); err == nil {
+		t.Fatalf("expected deleted worker package snapshot to be removed")
+	}
+}
+
+func TestWatcher_RefreshesStructureForRenamedFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	oldDir := filepath.Join(dir, "worker")
+	newDir := filepath.Join(dir, "renamed")
+	requireNoError(t, os.MkdirAll(oldDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(oldDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	result, err := p.ParseWorkspace(ctx, dir)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, result))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	requireNoError(t, os.Rename(oldDir, newDir))
+	w.removePathAndRefreshStructure(ctx, oldDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	if treeContainsID(tree, "testmodule/worker") || treeContainsID(tree, "folder:worker") {
+		t.Fatalf("expected old worker folder/package to be absent after rename")
+	}
+	requireTreePath(t, tree, "renamed", "testmodule/renamed")
+	if _, err := g.Query().GetDependencies("testmodule/renamed.Work"); err != nil {
+		t.Fatalf("expected renamed package snapshot to exist: %v", err)
+	}
+}
+
 func TestShouldSkipWatchDir(t *testing.T) {
 	tests := []struct {
 		name string
@@ -252,4 +343,51 @@ func closeTestWatcher(t *testing.T, w *Watcher) {
 	t.Helper()
 
 	requireNoError(t, w.watcher.Close())
+}
+
+func requireTreePath(t *testing.T, root *graph.RepositoryStructureNode, folderName string, packageID string) {
+	t.Helper()
+	if root == nil {
+		t.Fatalf("repository structure root is nil")
+	}
+	for _, child := range root.Children {
+		if child.Node != nil && child.Node.Name == folderName {
+			for _, grandchild := range child.Children {
+				if grandchild.Node != nil && grandchild.Node.ID == packageID {
+					return
+				}
+			}
+		}
+	}
+	t.Fatalf("expected repository structure to contain folder %q with package %q", folderName, packageID)
+}
+
+func treeContainsID(root *graph.RepositoryStructureNode, id string) bool {
+	if root == nil || root.Node == nil {
+		return false
+	}
+	if root.Node.ID == id {
+		return true
+	}
+	for _, child := range root.Children {
+		if treeContainsID(child, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func treeContainsName(root *graph.RepositoryStructureNode, name string) bool {
+	if root == nil || root.Node == nil {
+		return false
+	}
+	if root.Node.Name == name {
+		return true
+	}
+	for _, child := range root.Children {
+		if treeContainsName(child, name) {
+			return true
+		}
+	}
+	return false
 }

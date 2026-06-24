@@ -85,6 +85,19 @@ func TestParseQuery_ExplicitAndAndCaseNormalization(t *testing.T) {
 	assert.Equal(t, 5, q.Limit)
 }
 
+func TestParseQuery_AllowsContainsAsEdgeType(t *testing.T) {
+	input := `MATCH (folder:FOLDER)-[r:CONTAINS]->(child) RETURN folder.Name, child.Name LIMIT 20`
+	l := NewLexer(input)
+	p := NewParser(l)
+
+	q, err := p.ParseQuery()
+	require.NoError(t, err)
+	require.NotNil(t, q.Match.Pattern.Edge)
+	assert.Equal(t, "r", q.Match.Pattern.Edge.Alias)
+	assert.Equal(t, "CONTAINS", q.Match.Pattern.Edge.Type)
+	assert.Equal(t, DirOutbound, q.Match.Pattern.Edge.Direction)
+}
+
 func TestParseQuery_RejectsTrailingTokens(t *testing.T) {
 	input := `MATCH (n:FUNC) RETURN n WHERE n.Name = "main"`
 	l := NewLexer(input)

@@ -68,6 +68,7 @@ func process(ch chan int) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".gokg", "cache"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "worker", "testdata"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "vendor"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "node_modules"), 0o755))
 
 	parser := NewParser("example.com/phase9", "test-repo")
 	result, err := parser.ParseWorkspace(context.Background(), dir)
@@ -82,6 +83,7 @@ func process(ch chan int) {
 	assert.Nil(t, nodes["folder:.gokg"])
 	assert.Nil(t, nodes["folder:worker/testdata"])
 	assert.Nil(t, nodes["folder:vendor"])
+	assert.Nil(t, nodes["folder:node_modules"])
 
 	var workerFile *Node
 	for _, n := range result.Nodes {

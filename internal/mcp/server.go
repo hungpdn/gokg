@@ -204,6 +204,20 @@ func (s *Server) handleToolsList(req *Request) *Response {
 			},
 		},
 		{
+			"name":        "get_repository_structure",
+			"description": "Returns the repository folder/package/file structure from the knowledge graph, formatted as a Markdown tree",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_id":          map[string]interface{}{"type": "string", "description": "Repository ID in workspace mode. Optional for single-repo graphs."},
+					"root":             map[string]interface{}{"type": "string", "description": "Folder node ID or repository-relative path. Defaults to the repository root."},
+					"max_depth":        map[string]interface{}{"type": "integer", "description": "Maximum tree depth to return. Defaults to 4."},
+					"include_packages": map[string]interface{}{"type": "boolean", "description": "Include package nodes. Defaults to true."},
+					"include_files":    map[string]interface{}{"type": "boolean", "description": "Include file nodes below package nodes. Defaults to false."},
+				},
+			},
+		},
+		{
 			"name":        "find_path",
 			"description": "Finds the shortest call path between two nodes using BFS",
 			"inputSchema": map[string]interface{}{
@@ -327,6 +341,12 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			SourceID    string `json:"source_id"`
 			TargetID    string `json:"target_id"`
 			Query       string `json:"query"`
+			RepoID      string `json:"repo_id"`
+			Root        string `json:"root"`
+			MaxDepth    int    `json:"max_depth"`
+
+			IncludePackages *bool `json:"include_packages"`
+			IncludeFiles    *bool `json:"include_files"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -377,6 +397,27 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			return s.errorResult(req.ID, err)
 		}
 		return s.textResult(req.ID, formatSourceCodeMarkdown(params.Arguments.NodeID, code))
+
+	case "get_repository_structure":
+		includePackages := true
+		if params.Arguments.IncludePackages != nil {
+			includePackages = *params.Arguments.IncludePackages
+		}
+		includeFiles := false
+		if params.Arguments.IncludeFiles != nil {
+			includeFiles = *params.Arguments.IncludeFiles
+		}
+		tree, err := qb.GetRepositoryStructure(graph.RepositoryStructureOptions{
+			RepoID:          params.Arguments.RepoID,
+			Root:            params.Arguments.Root,
+			MaxDepth:        params.Arguments.MaxDepth,
+			IncludePackages: includePackages,
+			IncludeFiles:    includeFiles,
+		})
+		if err != nil {
+			return s.errorResult(req.ID, err)
+		}
+		return s.textResult(req.ID, formatRepositoryStructureMarkdown(tree))
 
 	case "find_path":
 		pathResults, err := qb.FindPath(params.Arguments.SourceID, params.Arguments.TargetID)
@@ -469,6 +510,50 @@ func formatSourceCodeMarkdown(nodeID, code string) string {
 	fmt.Fprintf(&b, "## Source Code of `%s`\n\n", nodeID)
 	writeMarkdownFencedBlock(&b, "go", code)
 	return b.String()
+}
+
+func formatRepositoryStructureMarkdown(root *graph.RepositoryStructureNode) string {
+	var b strings.Builder
+	b.WriteString("## Repository Structure\n\n")
+	if root == nil || root.Node == nil {
+		b.WriteString("_No repository structure found._\n")
+		return b.String()
+	}
+
+	fmt.Fprintf(&b, "%s\n", repositoryStructureLabel(root.Node))
+	for i, child := range root.Children {
+		writeRepositoryStructureNode(&b, child, "", i == len(root.Children)-1)
+	}
+	return b.String()
+}
+
+func writeRepositoryStructureNode(b *strings.Builder, node *graph.RepositoryStructureNode, prefix string, last bool) {
+	if node == nil || node.Node == nil {
+		return
+	}
+	connector := "|-- "
+	nextPrefix := prefix + "|   "
+	if last {
+		connector = "└─- "
+		nextPrefix = prefix + "    "
+	}
+	fmt.Fprintf(b, "%s%s%s\n", prefix, connector, repositoryStructureLabel(node.Node))
+	for i, child := range node.Children {
+		writeRepositoryStructureNode(b, child, nextPrefix, i == len(node.Children)-1)
+	}
+}
+
+func repositoryStructureLabel(node *parser.Node) string {
+	switch node.Type {
+	case parser.NodeTypeFolder:
+		return fmt.Sprintf("`%s/` (`%s`)", node.Name, node.Type)
+	case parser.NodeTypePackage:
+		return fmt.Sprintf("`%s` (`%s`, pkg: `%s`)", node.Name, node.Type, node.ID)
+	case parser.NodeTypeFile:
+		return fmt.Sprintf("`%s` (`%s`)", node.Name, node.Type)
+	default:
+		return fmt.Sprintf("`%s` (`%s`)", node.Name, node.Type)
+	}
 }
 
 func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResult) string {

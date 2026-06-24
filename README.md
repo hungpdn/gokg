@@ -20,7 +20,7 @@ Unlike generic Tree-sitter-based tools, GoKG uses Go-native analysis to understa
 - **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, and `RECEIVES_FROM`.
 - **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` and `HTTP` for IDEs and coding agents.
-- **Real-time incremental updates**: Optional file watcher reparses changed packages and merges updates into the live graph.
+- **Real-time incremental updates**: Optional file watcher reparses changed packages, refreshes repository structure, and merges updates into the live graph.
 - **Multi-repo workspaces**: Merges multiple Go repositories into one graph while storing each repo in its own BadgerDB.
 - **Graph statistics**: Reports node/edge/file counts, DB size, RAM estimate, node kinds, edge kinds, repo breakdowns, and top packages.
 - **Visual export**: Exports the graph as `json`, `mermaid`, or `dot`.
@@ -188,7 +188,7 @@ gokg workspace remove my-platform github.com/org/service-a
 
 ## MCP Tools for AI Agents
 
-When connected through `gokg mcp`, GoKG exposes 9 tools:
+When connected through `gokg mcp`, GoKG exposes 10 tools:
 
 | Tool | Description |
 |---|---|
@@ -198,9 +198,14 @@ When connected through `gokg mcp`, GoKG exposes 9 tools:
 | `get_concurrency_graph` | Goroutine/channel topology connected to a function |
 | `get_implementations` | Structs implementing a given interface |
 | `get_source_code` | Raw Go source for a node |
+| `get_repository_structure` | Repository folder/package/file tree from the graph |
 | `find_path` | Shortest call path between two nodes |
 | `search_nodes` | Find nodes by name or ID substring |
 | `execute_cypher` | Run strict read-only Cypher queries against the graph |
+
+`get_repository_structure` reads the graph snapshot rather than scanning files during the tool call. In workspace mode, pass `repo_id` when selecting a specific repository. Optional arguments include `root`, `max_depth`, `include_packages`, and `include_files`.
+
+With `gokg mcp --watch`, GoKG updates both package snapshots and repository structure for `.go` file create/write/delete/rename events. Folder create/delete/rename events refresh the folder tree and clean up package snapshots for deleted subtrees.
 
 ---
 
