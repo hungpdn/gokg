@@ -376,6 +376,35 @@ func TestHandleCallRepositoryStructureMarkdown(t *testing.T) {
 	assert.Contains(t, text, "`main.go`")
 }
 
+func TestHandleCallRepositoryStructureRejectsUnsafeLimits(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "folder:.", Type: parser.NodeTypeFolder, Name: "repo"})
+	server := NewServer(g)
+
+	for _, paramsRaw := range [][]byte{
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_depth":-1}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_depth":33}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_nodes":-1}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_nodes":5001}}`),
+	} {
+		req := &Request{JSONRPC: "2.0", ID: 11, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+		res := server.handleRequest(req)
+		require.NotNil(t, res)
+		require.NotNil(t, res.Error)
+		assert.Contains(t, res.Error.Message, "must be at")
+	}
+}
+
+func TestRepositoryStructureLabelEscapesMarkdownNames(t *testing.T) {
+	label := repositoryStructureLabel(&parser.Node{
+		Type: parser.NodeTypeFolder,
+		Name: "docs`draft\nnext",
+	})
+
+	assert.Equal(t, "``docs`draft next/`` (`FOLDER`)", label)
+}
+
 func TestHandleCallExecuteCypherRequiresLimit(t *testing.T) {
 	g := graph.NewGraph(nil)
 	ctx := context.Background()

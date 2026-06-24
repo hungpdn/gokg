@@ -216,8 +216,9 @@ MATCH (folder:FOLDER)-[r:CONTAINS]->(child) RETURN folder.Name, child.Name, chil
 
 For MCP clients that only need a repository tree, prefer the dedicated
 `get_repository_structure` tool. It returns a Markdown tree from the graph and
-accepts `repo_id`, `root`, `max_depth`, `include_packages`, and `include_files`
-arguments.
+accepts `repo_id`, `root`, `max_depth`, `max_nodes`, `include_packages`, and
+`include_files` arguments. Responses default to depth 4 and 2,000 nodes, with
+hard limits of depth 32 and 5,000 nodes.
 
 ### Multi-Repo Workspaces
 
@@ -280,6 +281,7 @@ writing Cypher:
     "name": "get_repository_structure",
     "arguments": {
       "max_depth": 4,
+      "max_nodes": 2000,
       "include_packages": true,
       "include_files": false
     }

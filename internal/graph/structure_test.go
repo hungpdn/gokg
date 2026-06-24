@@ -89,3 +89,74 @@ func TestReplaceRepositoryStructureRemovesStaleStructureOnly(t *testing.T) {
 	require.Len(t, tree.Children[0].Children, 1)
 	assert.Equal(t, newPkg.ID, tree.Children[0].Children[0].Node.ID)
 }
+
+func TestReplaceRepositoryStructureRemovesStaleNonGoFiles(t *testing.T) {
+	ctx := context.Background()
+	rootDir := t.TempDir()
+	oldPath := filepath.Join(rootDir, "old.md")
+	newPath := filepath.Join(rootDir, "new.md")
+	require.NoError(t, os.WriteFile(oldPath, []byte("old"), 0o644))
+
+	store := newRecordingBatchStorage()
+	g := NewGraph(store)
+	p := parser.NewParser("example.com/repo", "repo")
+
+	initial, err := p.BuildRepositoryStructure(ctx, rootDir, nil)
+	require.NoError(t, err)
+	require.NoError(t, g.BuildFromParseResult(ctx, initial))
+	require.NotNil(t, g.nodes[g.nodeMap[oldPath]])
+
+	require.NoError(t, os.Remove(oldPath))
+	require.NoError(t, os.WriteFile(newPath, []byte("new"), 0o644))
+	replacement, err := p.BuildRepositoryStructure(ctx, rootDir, nil)
+	require.NoError(t, err)
+	require.NoError(t, g.ReplaceRepositoryStructure(ctx, "repo", replacement))
+
+	_, exists := g.nodeMap[oldPath]
+	assert.False(t, exists)
+	require.NotNil(t, g.nodes[g.nodeMap[newPath]])
+	_, err = store.Get(ctx, []byte("node:"+oldPath))
+	assert.Error(t, err)
+}
+
+func TestGetRepositoryStructureEnforcesLimits(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	require.NoError(t, g.BuildFromParseResult(ctx, &parser.ParseResult{
+		Nodes: []*parser.Node{
+			{ID: "folder:.", Type: parser.NodeTypeFolder, Name: "repo"},
+			{ID: "folder:a", Type: parser.NodeTypeFolder, Name: "a"},
+			{ID: "folder:b", Type: parser.NodeTypeFolder, Name: "b"},
+		},
+		Edges: []*parser.Edge{
+			{From: "folder:.", To: "folder:a", Type: parser.EdgeTypeContains},
+			{From: "folder:a", To: "folder:b", Type: parser.EdgeTypeContains},
+		},
+	}))
+
+	_, err := g.Query().GetRepositoryStructure(RepositoryStructureOptions{
+		MaxDepth: RepositoryStructureMaxDepth + 1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_depth")
+
+	_, err = g.Query().GetRepositoryStructure(RepositoryStructureOptions{
+		MaxNodes: -1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_nodes")
+
+	_, err = g.Query().GetRepositoryStructure(RepositoryStructureOptions{
+		MaxDepth: 3,
+		MaxNodes: 2,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_nodes=2")
+
+	tree, err := g.Query().GetRepositoryStructure(RepositoryStructureOptions{
+		MaxDepth: 3,
+		MaxNodes: 3,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, tree)
+}

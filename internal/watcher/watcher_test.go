@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
@@ -197,6 +198,61 @@ func TestWatcher_AddsStructureForGoFileInNewFolder(t *testing.T) {
 	})
 	requireNoError(t, err)
 	requireTreePath(t, tree, "worker", "testmodule/worker")
+}
+
+func TestWatcher_RefreshesStructureForCreatedNonGoFile(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+
+	initial, err := p.BuildRepositoryStructure(ctx, dir, nil)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, initial))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	w.mu.Lock()
+	w.delay = 10 * time.Millisecond
+	w.mu.Unlock()
+
+	updateCalls := make(chan struct{}, 1)
+	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
+	})
+
+	readmePath := filepath.Join(dir, "README.md")
+	requireNoError(t, os.WriteFile(readmePath, []byte("# test\n"), 0o644))
+	w.handleEvent(ctx, fsnotify.Event{Name: readmePath, Op: fsnotify.Create})
+	waitForUpdateCalls(t, updateCalls, 1, 2*time.Second)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:     2,
+		IncludeFiles: true,
+	})
+	requireNoError(t, err)
+	if !treeContainsName(tree, "README.md") {
+		t.Fatalf("expected created non-Go file in repository structure")
+	}
+
+	skippedPath := filepath.Join(dir, ".DS_Store")
+	requireNoError(t, os.WriteFile(skippedPath, []byte("ignored"), 0o644))
+	w.handleEvent(ctx, fsnotify.Event{Name: skippedPath, Op: fsnotify.Create})
+	tree, err = g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:     2,
+		IncludeFiles: true,
+	})
+	requireNoError(t, err)
+	if treeContainsName(tree, ".DS_Store") {
+		t.Fatalf("expected skipped file to stay out of repository structure")
+	}
 }
 
 func TestWatcher_RemovesStructureForDeletedFolder(t *testing.T) {

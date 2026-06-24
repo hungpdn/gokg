@@ -25,11 +25,12 @@ type Watcher struct {
 	p       *parser.Parser
 	rootDir string
 
-	mu        sync.Mutex
-	updateMu  sync.Mutex
-	timers    map[string]*time.Timer
-	delay     time.Duration
-	runUpdate func(context.Context, func(context.Context) error) error
+	mu             sync.Mutex
+	updateMu       sync.Mutex
+	timers         map[string]*time.Timer
+	structureTimer *time.Timer
+	delay          time.Duration
+	runUpdate      func(context.Context, func(context.Context) error) error
 }
 
 func NewWatcher(g *graph.Graph, p *parser.Parser, rootDir string) (*Watcher, error) {
@@ -119,15 +120,24 @@ func (w *Watcher) addWatchDirRecursive(root string) error {
 func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 	if event.Has(fsnotify.Create) {
 		info, err := os.Stat(event.Name)
-		if err == nil && info.IsDir() {
-			if shouldSkipWatchDir(info.Name()) {
+		if err == nil {
+			if info.IsDir() {
+				if shouldSkipWatchDir(info.Name()) {
+					return
+				}
+				if err := w.addWatchDirRecursive(event.Name); err != nil {
+					log.Printf("Watcher add error for %s: %v", event.Name, err)
+				}
+				w.updateTree(ctx, event.Name)
 				return
 			}
-			if err := w.addWatchDirRecursive(event.Name); err != nil {
-				log.Printf("Watcher add error for %s: %v", event.Name, err)
+			if !strings.HasSuffix(event.Name, ".go") {
+				if parser.ShouldSkipFile(info.Name()) {
+					return
+				}
+				w.debounceRepositoryStructure(ctx)
+				return
 			}
-			w.updateTree(ctx, event.Name)
-			return
 		}
 	}
 
@@ -157,6 +167,31 @@ func (w *Watcher) debounce(ctx context.Context, dir string) {
 	w.timers[dir] = time.AfterFunc(w.delay, func() {
 		w.updatePackage(ctx, dir)
 	})
+}
+
+func (w *Watcher) debounceRepositoryStructure(ctx context.Context) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.structureTimer != nil {
+		w.structureTimer.Stop()
+	}
+
+	var timer *time.Timer
+	timer = time.AfterFunc(w.delay, func() {
+		w.mu.Lock()
+		if w.structureTimer != timer {
+			w.mu.Unlock()
+			return
+		}
+		w.structureTimer = nil
+		w.mu.Unlock()
+
+		if ctx.Err() == nil {
+			w.refreshRepositoryStructure(ctx)
+		}
+	})
+	w.structureTimer = timer
 }
 
 func (w *Watcher) updatePackage(ctx context.Context, dir string) {
@@ -275,6 +310,15 @@ func (w *Watcher) updateTree(ctx context.Context, root string) {
 
 	runUpdate := w.currentUpdateRunner()
 	w.updateTreeLocked(ctx, root, runUpdate)
+}
+
+func (w *Watcher) refreshRepositoryStructure(ctx context.Context) {
+	w.updateMu.Lock()
+	defer w.updateMu.Unlock()
+
+	if err := w.refreshRepositoryStructureLocked(ctx, w.currentUpdateRunner()); err != nil {
+		log.Printf("Error refreshing repository structure: %v", err)
+	}
 }
 
 func (w *Watcher) updateTreeLocked(

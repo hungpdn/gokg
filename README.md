@@ -1,6 +1,5 @@
 # GoKG - Golang Knowledge Graph
 
-
 [![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/cmd/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg/cmd/gokg)
 ![Go Version](https://img.shields.io/badge/go-1.25-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
@@ -202,10 +201,6 @@ When connected through `gokg mcp`, GoKG exposes 10 tools:
 | `find_path` | Shortest call path between two nodes |
 | `search_nodes` | Find nodes by name or ID substring |
 | `execute_cypher` | Run strict read-only Cypher queries against the graph |
-
-`get_repository_structure` reads the graph snapshot rather than scanning files during the tool call. In workspace mode, pass `repo_id` when selecting a specific repository. Optional arguments include `root`, `max_depth`, `include_packages`, and `include_files`.
-
-With `gokg mcp --watch`, GoKG updates both package snapshots and repository structure for `.go` file create/write/delete/rename events. Folder create/delete/rename events refresh the folder tree and clean up package snapshots for deleted subtrees.
 
 ---
 

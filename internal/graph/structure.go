@@ -10,12 +10,20 @@ import (
 	"github.com/hungpdn/gokg/internal/parser"
 )
 
+const (
+	RepositoryStructureDefaultMaxDepth = 4
+	RepositoryStructureMaxDepth        = 32
+	RepositoryStructureDefaultMaxNodes = 2_000
+	RepositoryStructureMaxNodes        = 5_000
+)
+
 // RepositoryStructureOptions controls how repository structure is read from the
 // graph.
 type RepositoryStructureOptions struct {
 	RepoID          string `json:"repo_id,omitempty"`
 	Root            string `json:"root,omitempty"`
 	MaxDepth        int    `json:"max_depth,omitempty"`
+	MaxNodes        int    `json:"max_nodes,omitempty"`
 	IncludePackages bool   `json:"include_packages"`
 	IncludeFiles    bool   `json:"include_files"`
 }
@@ -85,8 +93,9 @@ func (g *Graph) PackagePathsUnderDir(dir string) []string {
 }
 
 // ReplaceRepositoryStructure replaces only the repository structure snapshot:
-// FOLDER nodes and CONTAINS edges originating from WORKSPACE, REPO, or FOLDER
-// nodes. It intentionally leaves package snapshots and dependency edges alone.
+// FOLDER nodes, non-Go FILE nodes, and CONTAINS edges originating from
+// WORKSPACE, REPO, or FOLDER nodes. It intentionally leaves package snapshots,
+// Go source file nodes, and dependency edges alone.
 func (g *Graph) ReplaceRepositoryStructure(ctx context.Context, repoID string, result *parser.ParseResult) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -116,18 +125,18 @@ func (g *Graph) ReplaceRepositoryStructure(ctx context.Context, repoID string, r
 }
 
 func (g *Graph) removeRepositoryStructureLocked(ctx context.Context, repoID string) error {
-	folderIDs := make(map[int64]bool)
+	structureNodeIDs := make(map[int64]string)
 	for id, node := range g.nodes {
-		if node == nil || node.Type != parser.NodeTypeFolder {
+		if node == nil || !isRepositoryStructureOwnedNode(node) {
 			continue
 		}
 		if repoID != "" && node.RepoID != repoID {
 			continue
 		}
-		folderIDs[id] = true
+		structureNodeIDs[id] = node.ID
 		if store := g.storageForNode(node); store != nil {
 			if err := store.Delete(ctx, []byte("node:"+node.ID)); err != nil {
-				return fmt.Errorf("delete folder node %q: %w", node.ID, err)
+				return fmt.Errorf("delete repository structure node %q: %w", node.ID, err)
 			}
 		}
 	}
@@ -159,11 +168,20 @@ func (g *Graph) removeRepositoryStructureLocked(ctx context.Context, repoID stri
 		}
 	}
 
-	for id := range folderIDs {
+	for id, externalID := range structureNodeIDs {
+		delete(g.nodeMap, externalID)
 		delete(g.nodes, id)
 		delete(g.edges, id)
 	}
 	return nil
+}
+
+func isRepositoryStructureOwnedNode(node *parser.Node) bool {
+	if node == nil {
+		return false
+	}
+	return node.Type == parser.NodeTypeFolder ||
+		(node.Type == parser.NodeTypeFile && node.PkgPath == "")
 }
 
 func (g *Graph) isRepositoryStructureEdgeLocked(edge *parser.Edge, repoID string) bool {
@@ -210,11 +228,30 @@ func (qb *QueryBuilder) GetRepositoryStructure(opts RepositoryStructureOptions) 
 	}
 
 	maxDepth := opts.MaxDepth
-	if maxDepth <= 0 {
-		maxDepth = 4
+	if maxDepth < 0 {
+		return nil, fmt.Errorf("max_depth must be at least 1")
 	}
+	if maxDepth == 0 {
+		maxDepth = RepositoryStructureDefaultMaxDepth
+	}
+	if maxDepth > RepositoryStructureMaxDepth {
+		return nil, fmt.Errorf("max_depth must be at most %d", RepositoryStructureMaxDepth)
+	}
+
+	maxNodes := opts.MaxNodes
+	if maxNodes < 0 {
+		return nil, fmt.Errorf("max_nodes must be at least 1")
+	}
+	if maxNodes == 0 {
+		maxNodes = RepositoryStructureDefaultMaxNodes
+	}
+	if maxNodes > RepositoryStructureMaxNodes {
+		return nil, fmt.Errorf("max_nodes must be at most %d", RepositoryStructureMaxNodes)
+	}
+
 	seen := make(map[int64]bool)
-	return qb.buildRepositoryStructureNodeLocked(rootNumID, opts, maxDepth, 0, seen), nil
+	nodeCount := 0
+	return qb.buildRepositoryStructureNodeLocked(rootNumID, opts, maxDepth, 0, seen, &nodeCount, maxNodes)
 }
 
 func (qb *QueryBuilder) repositoryStructureRootIDLocked(opts RepositoryStructureOptions) (string, error) {
@@ -270,30 +307,59 @@ func (qb *QueryBuilder) buildRepositoryStructureNodeLocked(
 	maxDepth int,
 	depth int,
 	seen map[int64]bool,
-) *RepositoryStructureNode {
+	nodeCount *int,
+	maxNodes int,
+) (*RepositoryStructureNode, error) {
 	node := qb.g.nodes[numID]
 	if node == nil {
-		return nil
+		return nil, nil
 	}
+	if *nodeCount >= maxNodes {
+		return nil, repositoryStructureLimitError(maxNodes)
+	}
+	*nodeCount = *nodeCount + 1
+
 	tree := &RepositoryStructureNode{Node: node}
 	if seen[numID] || depth >= maxDepth {
-		return tree
+		return tree, nil
 	}
 	seen[numID] = true
 
-	childIDs := qb.repositoryStructureChildIDsLocked(numID, opts)
+	childIDs, err := qb.repositoryStructureChildIDsLocked(numID, opts, maxNodes-*nodeCount, maxNodes)
+	if err != nil {
+		return nil, err
+	}
 	for _, childID := range childIDs {
-		child := qb.buildRepositoryStructureNodeLocked(childID, opts, maxDepth, depth+1, seen)
+		child, err := qb.buildRepositoryStructureNodeLocked(childID, opts, maxDepth, depth+1, seen, nodeCount, maxNodes)
+		if err != nil {
+			return nil, err
+		}
 		if child != nil {
 			tree.Children = append(tree.Children, child)
 		}
 	}
 	delete(seen, numID)
-	return tree
+	return tree, nil
 }
 
-func (qb *QueryBuilder) repositoryStructureChildIDsLocked(numID int64, opts RepositoryStructureOptions) []int64 {
-	children := make([]int64, 0)
+func repositoryStructureLimitError(maxNodes int) error {
+	return fmt.Errorf(
+		"repository structure exceeds max_nodes=%d; narrow root, reduce max_depth, or exclude files",
+		maxNodes,
+	)
+}
+
+func (qb *QueryBuilder) repositoryStructureChildIDsLocked(
+	numID int64,
+	opts RepositoryStructureOptions,
+	maxChildren int,
+	maxNodes int,
+) ([]int64, error) {
+	capacity := len(qb.g.edges[numID])
+	if capacity > maxChildren {
+		capacity = maxChildren
+	}
+	children := make([]int64, 0, capacity)
 	for toID, edges := range qb.g.edges[numID] {
 		child := qb.g.nodes[toID]
 		if child == nil || !repositoryStructureIncludesNode(child, opts) {
@@ -302,12 +368,15 @@ func (qb *QueryBuilder) repositoryStructureChildIDsLocked(numID int64, opts Repo
 		if !hasContainsEdge(edges) {
 			continue
 		}
+		if len(children) >= maxChildren {
+			return nil, repositoryStructureLimitError(maxNodes)
+		}
 		children = append(children, toID)
 	}
 	sort.Slice(children, func(i, j int) bool {
 		return compareRepositoryStructureNodes(qb.g.nodes[children[i]], qb.g.nodes[children[j]]) < 0
 	})
-	return children
+	return children, nil
 }
 
 func repositoryStructureIncludesNode(node *parser.Node, opts RepositoryStructureOptions) bool {

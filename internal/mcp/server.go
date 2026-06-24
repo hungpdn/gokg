@@ -209,9 +209,20 @@ func (s *Server) handleToolsList(req *Request) *Response {
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"repo_id":          map[string]interface{}{"type": "string", "description": "Repository ID in workspace mode. Optional for single-repo graphs."},
-					"root":             map[string]interface{}{"type": "string", "description": "Folder node ID or repository-relative path. Defaults to the repository root."},
-					"max_depth":        map[string]interface{}{"type": "integer", "description": "Maximum tree depth to return. Defaults to 4."},
+					"repo_id": map[string]interface{}{"type": "string", "description": "Repository ID in workspace mode. Optional for single-repo graphs."},
+					"root":    map[string]interface{}{"type": "string", "description": "Folder node ID or repository-relative path. Defaults to the repository root."},
+					"max_depth": map[string]interface{}{
+						"type":        "integer",
+						"description": fmt.Sprintf("Maximum tree depth to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxDepth),
+						"minimum":     1,
+						"maximum":     graph.RepositoryStructureMaxDepth,
+					},
+					"max_nodes": map[string]interface{}{
+						"type":        "integer",
+						"description": fmt.Sprintf("Maximum number of tree nodes to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxNodes),
+						"minimum":     1,
+						"maximum":     graph.RepositoryStructureMaxNodes,
+					},
 					"include_packages": map[string]interface{}{"type": "boolean", "description": "Include package nodes. Defaults to true."},
 					"include_files":    map[string]interface{}{"type": "boolean", "description": "Include file nodes below package nodes. Defaults to false."},
 				},
@@ -344,6 +355,7 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			RepoID      string `json:"repo_id"`
 			Root        string `json:"root"`
 			MaxDepth    int    `json:"max_depth"`
+			MaxNodes    int    `json:"max_nodes"`
 
 			IncludePackages *bool `json:"include_packages"`
 			IncludeFiles    *bool `json:"include_files"`
@@ -411,6 +423,7 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			RepoID:          params.Arguments.RepoID,
 			Root:            params.Arguments.Root,
 			MaxDepth:        params.Arguments.MaxDepth,
+			MaxNodes:        params.Arguments.MaxNodes,
 			IncludePackages: includePackages,
 			IncludeFiles:    includeFiles,
 		})
@@ -544,15 +557,16 @@ func writeRepositoryStructureNode(b *strings.Builder, node *graph.RepositoryStru
 }
 
 func repositoryStructureLabel(node *parser.Node) string {
+	name := markdownInlineCode(node.Name)
 	switch node.Type {
 	case parser.NodeTypeFolder:
-		return fmt.Sprintf("`%s/` (`%s`)", node.Name, node.Type)
+		return fmt.Sprintf("%s (`%s`)", markdownInlineCode(node.Name+"/"), node.Type)
 	case parser.NodeTypePackage:
-		return fmt.Sprintf("`%s` (`%s`, pkg: `%s`)", node.Name, node.Type, node.ID)
+		return fmt.Sprintf("%s (`%s`, pkg: %s)", name, node.Type, markdownInlineCode(node.ID))
 	case parser.NodeTypeFile:
-		return fmt.Sprintf("`%s` (`%s`)", node.Name, node.Type)
+		return fmt.Sprintf("%s (`%s`)", name, node.Type)
 	default:
-		return fmt.Sprintf("`%s` (`%s`)", node.Name, node.Type)
+		return fmt.Sprintf("%s (`%s`)", name, node.Type)
 	}
 }
 
@@ -609,9 +623,32 @@ func writeMarkdownFencedBlock(b *strings.Builder, language string, content strin
 }
 
 func markdownFence(content string) string {
+	maxRun := maxBacktickRun(content)
+	if maxRun < 3 {
+		maxRun = 3
+	} else {
+		maxRun++
+	}
+	return strings.Repeat("`", maxRun)
+}
+
+func markdownInlineCode(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ").Replace(value)
+	fence := strings.Repeat("`", maxBacktickRun(value)+1)
+	if value == "" {
+		return fence + " " + fence
+	}
+	if strings.HasPrefix(value, "`") || strings.HasSuffix(value, "`") ||
+		strings.HasPrefix(value, " ") || strings.HasSuffix(value, " ") {
+		return fence + " " + value + " " + fence
+	}
+	return fence + value + fence
+}
+
+func maxBacktickRun(value string) int {
 	maxRun := 0
 	currentRun := 0
-	for _, r := range content {
+	for _, r := range value {
 		if r == '`' {
 			currentRun++
 			if currentRun > maxRun {
@@ -621,12 +658,7 @@ func markdownFence(content string) string {
 		}
 		currentRun = 0
 	}
-	if maxRun < 3 {
-		maxRun = 3
-	} else {
-		maxRun++
-	}
-	return strings.Repeat("`", maxRun)
+	return maxRun
 }
 
 func encodeIndentedJSON(value interface{}) (string, error) {
