@@ -182,7 +182,7 @@ func (p *Parser) parseEdgePatternBody() (*EdgePattern, error) {
 
 	if p.curToken.Type == TokenColon {
 		p.nextToken()
-		if p.curToken.Type != TokenIdent {
+		if p.curToken.Type != TokenIdent && p.curToken.Type != TokenContains {
 			return nil, fmt.Errorf("expected edge type after :, got %v", p.curToken.Literal)
 		}
 		ep.Type = strings.ToUpper(p.curToken.Literal)

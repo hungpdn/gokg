@@ -194,13 +194,38 @@ func (s *Server) handleToolsList(req *Request) *Response {
 		},
 		{
 			"name":        "get_source_code",
-			"description": "Reads the actual Go source code of a function, struct, or interface node from disk",
+			"description": "Reads the actual Go source code of a function, type, or route registration node from disk",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID with line info"},
 				},
 				"required": []string{"node_id"},
+			},
+		},
+		{
+			"name":        "get_repository_structure",
+			"description": "Returns the repository folder/package/file structure from the knowledge graph, formatted as a Markdown tree",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_id": map[string]interface{}{"type": "string", "description": "Repository ID in workspace mode. Optional for single-repo graphs."},
+					"root":    map[string]interface{}{"type": "string", "description": "Folder node ID or repository-relative path. Defaults to the repository root."},
+					"max_depth": map[string]interface{}{
+						"type":        "integer",
+						"description": fmt.Sprintf("Maximum tree depth to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxDepth),
+						"minimum":     1,
+						"maximum":     graph.RepositoryStructureMaxDepth,
+					},
+					"max_nodes": map[string]interface{}{
+						"type":        "integer",
+						"description": fmt.Sprintf("Maximum number of tree nodes to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxNodes),
+						"minimum":     1,
+						"maximum":     graph.RepositoryStructureMaxNodes,
+					},
+					"include_packages": map[string]interface{}{"type": "boolean", "description": "Include package nodes. Defaults to true."},
+					"include_files":    map[string]interface{}{"type": "boolean", "description": "Include file nodes below package nodes. Defaults to false."},
+				},
 			},
 		},
 		{
@@ -247,6 +272,7 @@ NODE TYPES (use in patterns as :TYPE):
   INTERFACE  – an interface type
   CHANNEL    – a channel variable (e.g. chan int)
   GOROUTINE  – a goroutine spawned with 'go'
+  ROUTE      – an HTTP route registration (e.g. GET /healthz)
   BOUNDARY   – an external dependency (outside the module)
   REPO       – a repository root (multi-repo workspace)
   WORKSPACE  – a multi-repo workspace root
@@ -261,6 +287,7 @@ EDGE TYPES (use in patterns as :TYPE):
   SPAWNS         – function spawns a goroutine
   SENDS_TO       – function sends to a channel
   RECEIVES_FROM  – function receives from a channel
+  REGISTERS_ROUTE – function, method, or goroutine registers an HTTP route
 
 NODE PROPERTIES (use in WHERE and RETURN):
   Name      – short identifier (e.g. "ParseWorkspace", "Storage")
@@ -297,6 +324,8 @@ EXAMPLES:
   MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name LIMIT 20
   MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name LIMIT 20
   MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name LIMIT 20
+  MATCH (owner)-[r:REGISTERS_ROUTE]->(route:ROUTE) RETURN owner.Name, route.Name LIMIT 50
+  MATCH (route:ROUTE)-[r:REFERENCES]->(handler) RETURN route.Name, handler.Name LIMIT 50
   MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n LIMIT 20
 
 Always include MATCH, RETURN, and a positive LIMIT after RETURN.`,
@@ -327,6 +356,13 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			SourceID    string `json:"source_id"`
 			TargetID    string `json:"target_id"`
 			Query       string `json:"query"`
+			RepoID      string `json:"repo_id"`
+			Root        string `json:"root"`
+			MaxDepth    int    `json:"max_depth"`
+			MaxNodes    int    `json:"max_nodes"`
+
+			IncludePackages *bool `json:"include_packages"`
+			IncludeFiles    *bool `json:"include_files"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -377,6 +413,28 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 			return s.errorResult(req.ID, err)
 		}
 		return s.textResult(req.ID, formatSourceCodeMarkdown(params.Arguments.NodeID, code))
+
+	case "get_repository_structure":
+		includePackages := true
+		if params.Arguments.IncludePackages != nil {
+			includePackages = *params.Arguments.IncludePackages
+		}
+		includeFiles := false
+		if params.Arguments.IncludeFiles != nil {
+			includeFiles = *params.Arguments.IncludeFiles
+		}
+		tree, err := qb.GetRepositoryStructure(graph.RepositoryStructureOptions{
+			RepoID:          params.Arguments.RepoID,
+			Root:            params.Arguments.Root,
+			MaxDepth:        params.Arguments.MaxDepth,
+			MaxNodes:        params.Arguments.MaxNodes,
+			IncludePackages: includePackages,
+			IncludeFiles:    includeFiles,
+		})
+		if err != nil {
+			return s.errorResult(req.ID, err)
+		}
+		return s.textResult(req.ID, formatRepositoryStructureMarkdown(tree))
 
 	case "find_path":
 		pathResults, err := qb.FindPath(params.Arguments.SourceID, params.Arguments.TargetID)
@@ -471,6 +529,51 @@ func formatSourceCodeMarkdown(nodeID, code string) string {
 	return b.String()
 }
 
+func formatRepositoryStructureMarkdown(root *graph.RepositoryStructureNode) string {
+	var b strings.Builder
+	b.WriteString("## Repository Structure\n\n")
+	if root == nil || root.Node == nil {
+		b.WriteString("_No repository structure found._\n")
+		return b.String()
+	}
+
+	fmt.Fprintf(&b, "%s\n", repositoryStructureLabel(root.Node))
+	for i, child := range root.Children {
+		writeRepositoryStructureNode(&b, child, "", i == len(root.Children)-1)
+	}
+	return b.String()
+}
+
+func writeRepositoryStructureNode(b *strings.Builder, node *graph.RepositoryStructureNode, prefix string, last bool) {
+	if node == nil || node.Node == nil {
+		return
+	}
+	connector := "|-- "
+	nextPrefix := prefix + "|   "
+	if last {
+		connector = "└─- "
+		nextPrefix = prefix + "    "
+	}
+	fmt.Fprintf(b, "%s%s%s\n", prefix, connector, repositoryStructureLabel(node.Node))
+	for i, child := range node.Children {
+		writeRepositoryStructureNode(b, child, nextPrefix, i == len(node.Children)-1)
+	}
+}
+
+func repositoryStructureLabel(node *parser.Node) string {
+	name := markdownInlineCode(node.Name)
+	switch node.Type {
+	case parser.NodeTypeFolder:
+		return fmt.Sprintf("%s (`%s`)", markdownInlineCode(node.Name+"/"), node.Type)
+	case parser.NodeTypePackage:
+		return fmt.Sprintf("%s (`%s`, pkg: %s)", name, node.Type, markdownInlineCode(node.ID))
+	case parser.NodeTypeFile:
+		return fmt.Sprintf("%s (`%s`)", name, node.Type)
+	default:
+		return fmt.Sprintf("%s (`%s`)", name, node.Type)
+	}
+}
+
 func formatPathMarkdown(sourceID, targetID string, pathResults []graph.PathResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Shortest Path: `%s` → `%s`\n\n", sourceID, targetID)
@@ -524,9 +627,32 @@ func writeMarkdownFencedBlock(b *strings.Builder, language string, content strin
 }
 
 func markdownFence(content string) string {
+	maxRun := maxBacktickRun(content)
+	if maxRun < 3 {
+		maxRun = 3
+	} else {
+		maxRun++
+	}
+	return strings.Repeat("`", maxRun)
+}
+
+func markdownInlineCode(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ").Replace(value)
+	fence := strings.Repeat("`", maxBacktickRun(value)+1)
+	if value == "" {
+		return fence + " " + fence
+	}
+	if strings.HasPrefix(value, "`") || strings.HasSuffix(value, "`") ||
+		strings.HasPrefix(value, " ") || strings.HasSuffix(value, " ") {
+		return fence + " " + value + " " + fence
+	}
+	return fence + value + fence
+}
+
+func maxBacktickRun(value string) int {
 	maxRun := 0
 	currentRun := 0
-	for _, r := range content {
+	for _, r := range value {
 		if r == '`' {
 			currentRun++
 			if currentRun > maxRun {
@@ -536,12 +662,7 @@ func markdownFence(content string) string {
 		}
 		currentRun = 0
 	}
-	if maxRun < 3 {
-		maxRun = 3
-	} else {
-		maxRun++
-	}
-	return strings.Repeat("`", maxRun)
+	return maxRun
 }
 
 func encodeIndentedJSON(value interface{}) (string, error) {

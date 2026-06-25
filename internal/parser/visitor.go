@@ -16,6 +16,7 @@ import (
 func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Package, mu *sync.Mutex, result *ParseResult) error {
 	createdChannels := make(map[string]bool)
 	createdBoundaryNodes := make(map[string]bool)
+	createdRoutes := make(map[string]bool)
 	pkgPath := packageGraphPath(pkg)
 
 	for _, file := range pkg.Syntax {
@@ -71,7 +72,7 @@ func (p *Parser) extractPackageEntities(ctx context.Context, pkg *packages.Packa
 					}
 				}
 			case *ast.FuncDecl:
-				p.extractFuncDecl(pkg, filename, node, createdChannels, createdBoundaryNodes, mu, result)
+				p.extractFuncDecl(pkg, filename, node, createdChannels, createdBoundaryNodes, createdRoutes, mu, result)
 			}
 		}
 	}
@@ -243,6 +244,7 @@ func (p *Parser) extractFuncDecl(
 	node *ast.FuncDecl,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -294,7 +296,18 @@ func (p *Parser) extractFuncDecl(
 
 	p.addTypeReferenceEdges(funcID, sig, mu, result)
 	if node.Body != nil {
-		p.inspectFunctionBody(pkg, node.Body, funcID, filename, createdChannels, createdBoundaryNodes, mu, result)
+		p.inspectFunctionBody(
+			pkg,
+			node.Body,
+			funcID,
+			filename,
+			createdChannels,
+			createdBoundaryNodes,
+			createdRoutes,
+			newRouteScope(),
+			mu,
+			result,
+		)
 	}
 }
 
@@ -305,6 +318,8 @@ func (p *Parser) inspectFunctionBody(
 	filename string,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
+	routeScope *routeScope,
 	mu *sync.Mutex,
 	result *ParseResult,
 ) {
@@ -322,22 +337,64 @@ func (p *Parser) inspectFunctionBody(
 				return false
 			}
 			if node.Body != nil {
-				p.inspectFunctionBody(pkg, node.Body, currentFunc, filename, createdChannels, createdBoundaryNodes, mu, result)
+				p.inspectFunctionBody(
+					pkg,
+					node.Body,
+					currentFunc,
+					filename,
+					createdChannels,
+					createdBoundaryNodes,
+					createdRoutes,
+					routeScope.clone(),
+					mu,
+					result,
+				)
 			}
 			return false
 		case *ast.GoStmt:
-			p.addGoroutineEdges(pkg, node, currentFunc, filename, createdChannels, createdBoundaryNodes, goCalls, goFuncLits, mu, result)
+			p.addGoroutineEdges(
+				pkg,
+				node,
+				currentFunc,
+				filename,
+				createdChannels,
+				createdBoundaryNodes,
+				createdRoutes,
+				routeScope,
+				goCalls,
+				goFuncLits,
+				mu,
+				result,
+			)
+		case *ast.AssignStmt:
+			routeScope.applyAssign(pkg, node)
+		case *ast.DeclStmt:
+			routeScope.applyDecl(pkg, node)
+		case *ast.IfStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+			routeScope.markControlFlowAssignments(pkg, node.Else)
+		case *ast.ForStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+			routeScope.markControlFlowAssignments(pkg, node.Post)
+		case *ast.SwitchStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+		case *ast.TypeSwitchStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
+		case *ast.SelectStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
 		case *ast.CallExpr:
 			if !goCalls[node] {
 				p.addCallEdge(pkg, currentFunc, node, createdBoundaryNodes, mu, result)
 				p.addChannelArgumentFlowEdges(pkg, node, currentFunc, filename, createdChannels, mu, result)
 				p.addFuncLiteralChannelArgumentFlowEdges(pkg, node, currentFunc, currentFunc, filename, createdChannels, mu, result)
+				p.addRouteEdges(pkg, currentFunc, filename, node, createdBoundaryNodes, createdRoutes, routeScope, mu, result)
 			}
 		case *ast.CompositeLit:
 			typ := pkg.TypesInfo.TypeOf(node)
 			p.addTypeReferenceEdges(currentFunc, typ, mu, result)
 			p.addInstantiationEdge(currentFunc, typ, edgeOccurrence(pkg, node), mu, result)
 		case *ast.RangeStmt:
+			routeScope.markControlFlowAssignments(pkg, node.Body)
 			chanNodeID := p.resolveChannelNode(pkg, node.X, currentFunc, filename, createdChannels, mu, result)
 			if chanNodeID != "" {
 				appendEdge(mu, result, &Edge{
@@ -565,6 +622,8 @@ func (p *Parser) addGoroutineEdges(
 	filename string,
 	createdChannels map[string]bool,
 	createdBoundaryNodes map[string]bool,
+	createdRoutes map[string]bool,
+	routeScope *routeScope,
 	goCalls map[*ast.CallExpr]bool,
 	goFuncLits map[*ast.FuncLit]bool,
 	mu *sync.Mutex,
@@ -612,9 +671,21 @@ func (p *Parser) addGoroutineEdges(
 	}
 	p.addChannelArgumentFlowEdges(pkg, node.Call, currentFunc, filename, createdChannels, mu, result)
 	p.addFuncLiteralChannelArgumentFlowEdges(pkg, node.Call, goroutineID, currentFunc, filename, createdChannels, mu, result)
+	p.addRouteEdges(pkg, goroutineID, filename, node.Call, createdBoundaryNodes, createdRoutes, routeScope, mu, result)
 
 	if fun, ok := node.Call.Fun.(*ast.FuncLit); ok && fun.Body != nil {
-		p.inspectFunctionBody(pkg, fun.Body, goroutineID, filename, createdChannels, createdBoundaryNodes, mu, result)
+		p.inspectFunctionBody(
+			pkg,
+			fun.Body,
+			goroutineID,
+			filename,
+			createdChannels,
+			createdBoundaryNodes,
+			createdRoutes,
+			routeScope.clone(),
+			mu,
+			result,
+		)
 	}
 }
 
@@ -667,8 +738,9 @@ func (p *Parser) addTypeReferenceEdges(from string, typ types.Type, mu *sync.Mut
 
 func (p *Parser) addTypeReferenceEdgesFromTypes(from string, mu *sync.Mutex, result *ParseResult, typs ...types.Type) {
 	typeIDs := make(map[string]string)
+	visited := make(map[types.Type]struct{})
 	for _, typ := range typs {
-		collectGraphTypeIDs(typ, typeIDs)
+		collectGraphTypeIDs(typ, typeIDs, visited)
 	}
 
 	for typeID, pkgPath := range typeIDs {
@@ -707,7 +779,7 @@ func (p *Parser) addExpressionReferenceEdges(
 		switch node := n.(type) {
 		case *ast.FuncLit:
 			if node.Body != nil {
-				p.inspectFunctionBody(pkg, node.Body, from, filename, createdChannels, createdBoundaryNodes, mu, result)
+				p.inspectFunctionBody(pkg, node.Body, from, filename, createdChannels, createdBoundaryNodes, nil, nil, mu, result)
 			}
 			return false
 		case *ast.CallExpr:
@@ -1029,10 +1101,14 @@ func graphTypeString(typ types.Type) string {
 	})
 }
 
-func collectGraphTypeIDs(typ types.Type, out map[string]string) {
+func collectGraphTypeIDs(typ types.Type, out map[string]string, visited map[types.Type]struct{}) {
 	if typ == nil {
 		return
 	}
+	if _, ok := visited[typ]; ok {
+		return
+	}
+	visited[typ] = struct{}{}
 
 	if typeID, pkgPath, ok := graphTypeID(typ); ok {
 		out[typeID] = pkgPath
@@ -1040,44 +1116,44 @@ func collectGraphTypeIDs(typ types.Type, out map[string]string) {
 
 	switch t := typ.(type) {
 	case *types.Pointer:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Slice:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Array:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Chan:
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Map:
-		collectGraphTypeIDs(t.Key(), out)
-		collectGraphTypeIDs(t.Elem(), out)
+		collectGraphTypeIDs(t.Key(), out, visited)
+		collectGraphTypeIDs(t.Elem(), out, visited)
 	case *types.Struct:
 		for i := 0; i < t.NumFields(); i++ {
-			collectGraphTypeIDs(t.Field(i).Type(), out)
+			collectGraphTypeIDs(t.Field(i).Type(), out, visited)
 		}
 	case *types.Interface:
 		for i := 0; i < t.NumEmbeddeds(); i++ {
-			collectGraphTypeIDs(t.EmbeddedType(i), out)
+			collectGraphTypeIDs(t.EmbeddedType(i), out, visited)
 		}
 		for i := 0; i < t.NumExplicitMethods(); i++ {
-			collectGraphTypeIDs(t.ExplicitMethod(i).Type(), out)
+			collectGraphTypeIDs(t.ExplicitMethod(i).Type(), out, visited)
 		}
 	case *types.Signature:
 		if t.Recv() != nil {
-			collectGraphTypeIDs(t.Recv().Type(), out)
+			collectGraphTypeIDs(t.Recv().Type(), out, visited)
 		}
-		collectTupleGraphTypeIDs(t.Params(), out)
-		collectTupleGraphTypeIDs(t.Results(), out)
+		collectTupleGraphTypeIDs(t.Params(), out, visited)
+		collectTupleGraphTypeIDs(t.Results(), out, visited)
 	case *types.Tuple:
-		collectTupleGraphTypeIDs(t, out)
+		collectTupleGraphTypeIDs(t, out, visited)
 	}
 }
 
-func collectTupleGraphTypeIDs(tuple *types.Tuple, out map[string]string) {
+func collectTupleGraphTypeIDs(tuple *types.Tuple, out map[string]string, visited map[types.Type]struct{}) {
 	if tuple == nil {
 		return
 	}
 	for i := 0; i < tuple.Len(); i++ {
-		collectGraphTypeIDs(tuple.At(i).Type(), out)
+		collectGraphTypeIDs(tuple.At(i).Type(), out, visited)
 	}
 }
 

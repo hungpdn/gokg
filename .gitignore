@@ -7,3 +7,5 @@ bin/
 dist/
 __debug*
 .codegraph
+*.dot
+coverage*

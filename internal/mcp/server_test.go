@@ -166,18 +166,31 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 9, "Should have 9 tools registered")
+	assert.Len(t, tools, 10, "Should have 10 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
+	var cypherDescription string
+	var sourceDescription string
 	for _, tool := range tools {
-		toolNames[tool["name"].(string)] = true
+		name := tool["name"].(string)
+		toolNames[name] = true
+		if name == "execute_cypher" {
+			cypherDescription = tool["description"].(string)
+		}
+		if name == "get_source_code" {
+			sourceDescription = tool["description"].(string)
+		}
 	}
 	assert.True(t, toolNames["get_implementations"])
 	assert.True(t, toolNames["get_source_code"])
 	assert.True(t, toolNames["find_path"])
 	assert.True(t, toolNames["get_concurrency_graph"])
+	assert.True(t, toolNames["get_repository_structure"])
 	assert.True(t, toolNames["execute_cypher"])
+	assert.Contains(t, cypherDescription, "ROUTE")
+	assert.Contains(t, cypherDescription, "REGISTERS_ROUTE")
+	assert.Contains(t, sourceDescription, "route registration")
 }
 
 func TestHandleCallToolError(t *testing.T) {
@@ -340,6 +353,68 @@ func TestHandleCallUnknownTool(t *testing.T) {
 	require.NotNil(t, res)
 	assert.NotNil(t, res.Error)
 	assert.Contains(t, res.Error.Message, "Unknown tool")
+}
+
+func TestHandleCallRepositoryStructureMarkdown(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	root := &parser.Node{ID: "folder:.", Type: parser.NodeTypeFolder, Name: "repo", FilePath: "/tmp/repo", RepoID: "repo"}
+	internal := &parser.Node{ID: "folder:internal", Type: parser.NodeTypeFolder, Name: "internal", FilePath: "/tmp/repo/internal", RepoID: "repo"}
+	pkg := &parser.Node{ID: "example.com/repo/internal", Type: parser.NodeTypePackage, Name: "internal", PkgPath: "example.com/repo/internal", RepoID: "repo"}
+	file := &parser.Node{ID: "/tmp/repo/internal/main.go", Type: parser.NodeTypeFile, Name: "main.go", PkgPath: "example.com/repo/internal", FilePath: "/tmp/repo/internal/main.go", RepoID: "repo"}
+	requireAddNode(t, g, ctx, root)
+	requireAddNode(t, g, ctx, internal)
+	requireAddNode(t, g, ctx, pkg)
+	requireAddNode(t, g, ctx, file)
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "folder:.", To: "folder:internal", Type: parser.EdgeTypeContains, RepoID: "repo"})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "folder:internal", To: "example.com/repo/internal", Type: parser.EdgeTypeContains, RepoID: "repo"})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "example.com/repo/internal", To: "/tmp/repo/internal/main.go", Type: parser.EdgeTypeContains, RepoID: "repo"})
+
+	server := NewServer(g)
+	paramsRaw := []byte(`{"name": "get_repository_structure", "arguments": {"include_files": true, "max_depth": 4}}`)
+	req := &Request{JSONRPC: "2.0", ID: 10, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.Nil(t, res.Error)
+	resultMap := res.Result.(map[string]interface{})
+	content := resultMap["content"].([]map[string]interface{})
+	text := content[0]["text"].(string)
+
+	assert.Contains(t, text, "## Repository Structure")
+	assert.Contains(t, text, "`repo/`")
+	assert.Contains(t, text, "`internal/`")
+	assert.Contains(t, text, "example.com/repo/internal")
+	assert.Contains(t, text, "`main.go`")
+}
+
+func TestHandleCallRepositoryStructureRejectsUnsafeLimits(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "folder:.", Type: parser.NodeTypeFolder, Name: "repo"})
+	server := NewServer(g)
+
+	for _, paramsRaw := range [][]byte{
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_depth":-1}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_depth":33}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_nodes":-1}}`),
+		[]byte(`{"name":"get_repository_structure","arguments":{"max_nodes":5001}}`),
+	} {
+		req := &Request{JSONRPC: "2.0", ID: 11, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+		res := server.handleRequest(req)
+		require.NotNil(t, res)
+		require.NotNil(t, res.Error)
+		assert.Contains(t, res.Error.Message, "must be at")
+	}
+}
+
+func TestRepositoryStructureLabelEscapesMarkdownNames(t *testing.T) {
+	label := repositoryStructureLabel(&parser.Node{
+		Type: parser.NodeTypeFolder,
+		Name: "docs`draft\nnext",
+	})
+
+	assert.Equal(t, "``docs`draft next/`` (`FOLDER`)", label)
 }
 
 func TestHandleCallExecuteCypherRequiresLimit(t *testing.T) {

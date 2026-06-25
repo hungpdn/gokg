@@ -41,6 +41,7 @@ Use node types after `:` inside parentheses: `(alias:TYPE)`.
 | `INTERFACE` | Interface type | `github.com/org/repo/storage.Storage` |
 | `CHANNEL` | Channel variable | `github.com/org/repo/pkg.funcName.chanName` |
 | `GOROUTINE` | Goroutine spawned with `go` | `github.com/org/repo/pkg.funcName.goroutine_L42` |
+| `ROUTE` | Static net/http or Gin route registration | `github.com/org/repo/routes.go::route:GET:/healthz` |
 | `BOUNDARY` | External dependency | `fmt.Println` |
 | `REPO` | Repository root in workspace mode | `github.com/org/service-a` |
 | `WORKSPACE` | Multi-repo workspace root | `my-platform` |
@@ -62,6 +63,7 @@ Use edge types after `:` inside square brackets: `[alias:TYPE]`.
 | `SPAWNS` | `(a)-[:SPAWNS]->(b)` | Function `a` spawns goroutine `b` |
 | `SENDS_TO` | `(a)-[:SENDS_TO]->(b)` | Function `a` sends to channel `b` |
 | `RECEIVES_FROM` | `(a)-[:RECEIVES_FROM]->(b)` | Function `a` receives from channel `b` |
+| `REGISTERS_ROUTE` | `(a)-[:REGISTERS_ROUTE]->(r)` | Function, method, or goroutine `a` registers route `r` |
 
 ---
 
@@ -214,6 +216,34 @@ MATCH (f:FILE)-[r:IMPORTS]->(pkg) WHERE f.Name CONTAINS "analyze" RETURN pkg.ID
 MATCH (folder:FOLDER)-[r:CONTAINS]->(child) RETURN folder.Name, child.Name, child.Type LIMIT 40
 ```
 
+For MCP clients that only need a repository tree, prefer the dedicated
+`get_repository_structure` tool. It returns a Markdown tree from the graph and
+accepts `repo_id`, `root`, `max_depth`, `max_nodes`, `include_packages`, and
+`include_files` arguments. Responses default to depth 4 and 2,000 nodes, with
+hard limits of depth 32 and 5,000 nodes.
+
+### HTTP Route Topology
+
+GoKG extracts compile-time `net/http` `Handle`/`HandleFunc` patterns and Gin
+route/static patterns. Gin group prefixes and group middleware are resolved
+when their values remain static within the registering function. Dynamic route
+patterns, dynamic group factories, and routes registered through unknown group
+parameters are skipped.
+
+```cypher
+-- Functions, methods, and goroutines that register routes
+MATCH (owner)-[r:REGISTERS_ROUTE]->(route:ROUTE)
+RETURN owner.Name, route.Name, route.FilePath LIMIT 50
+
+-- Statically resolved middleware and handlers for each route
+MATCH (route:ROUTE)-[r:REFERENCES]->(handler)
+RETURN route.Name, handler.Name, handler.ID LIMIT 50
+```
+
+Route IDs use the module path plus repository-relative file path, method, and
+full route pattern. Rebuild existing databases with `gokg analyze --rebuild`
+after upgrading to a version that supports route extraction.
+
 ### Multi-Repo Workspaces
 
 ```cypher
@@ -264,6 +294,24 @@ When `gokg mcp` is running, a connected AI agent can call the `execute_cypher` t
 ```
 
 The response is Markdown containing the original query and a JSON array of result rows.
+
+For repository structure, agents can call `get_repository_structure` instead of
+writing Cypher:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "get_repository_structure",
+    "arguments": {
+      "max_depth": 4,
+      "max_nodes": 2000,
+      "include_packages": true,
+      "include_files": false
+    }
+  }
+}
+```
 
 ---
 

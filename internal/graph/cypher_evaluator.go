@@ -28,21 +28,23 @@ var validCypherNodeTypes = map[string]struct{}{
 	string(parser.NodeTypeTypeAlias): {},
 	string(parser.NodeTypeChannel):   {},
 	string(parser.NodeTypeGoroutine): {},
+	string(parser.NodeTypeRoute):     {},
 	string(parser.NodeTypeBoundary):  {},
 	string(parser.NodeTypeRepo):      {},
 	string(parser.NodeTypeWorkspace): {},
 }
 
 var validCypherEdgeTypes = map[string]struct{}{
-	string(parser.EdgeTypeCalls):        {},
-	string(parser.EdgeTypeImplements):   {},
-	string(parser.EdgeTypeImports):      {},
-	string(parser.EdgeTypeReferences):   {},
-	string(parser.EdgeTypeInstantiates): {},
-	string(parser.EdgeTypeSpawns):       {},
-	string(parser.EdgeTypeSendsTo):      {},
-	string(parser.EdgeTypeReceivesFrom): {},
-	string(parser.EdgeTypeContains):     {},
+	string(parser.EdgeTypeCalls):          {},
+	string(parser.EdgeTypeImplements):     {},
+	string(parser.EdgeTypeImports):        {},
+	string(parser.EdgeTypeReferences):     {},
+	string(parser.EdgeTypeInstantiates):   {},
+	string(parser.EdgeTypeSpawns):         {},
+	string(parser.EdgeTypeSendsTo):        {},
+	string(parser.EdgeTypeReceivesFrom):   {},
+	string(parser.EdgeTypeContains):       {},
+	string(parser.EdgeTypeRegistersRoute): {},
 }
 
 var validCypherNodeProperties = map[string]struct{}{

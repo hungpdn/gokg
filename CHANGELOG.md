@@ -4,6 +4,28 @@ All notable changes to GoKG will be documented in this file.
 
 The format follows Keep a Changelog, and this project uses semantic versioning once tagged releases begin.
 
+## [v0.1.0-alpha.3] - 2026-06-25
+
+### Added
+
+- HTTP route graph support with `ROUTE` nodes and `REGISTERS_ROUTE` edges.
+- Static `net/http` route extraction for `Handle` and `HandleFunc` registrations.
+- Gin route extraction for router methods, static registrations, route groups, and static middleware prefixes.
+- `get_repository_structure` MCP tool for repository folder/package/file tree snapshots.
+- Repository structure graph management that refreshes during analysis and watcher updates.
+
+### Changed
+
+- Repository structure snapshots are now bounded for MCP responses to keep agent output predictable.
+- Cypher and MCP docs now describe route nodes, route edges, and repository structure queries.
+- README now includes a clearer "Why it matters?" section and route-aware feature summary.
+
+### Fixed
+
+- Prevented parser stack overflows on recursive Go type graphs.
+- Broadened HTTP route extraction so more `net/http` and Gin registration patterns are captured consistently.
+- Hardened watcher synchronization and repository structure refresh behavior.
+
 ## [v0.1.0-alpha.2] - 2026-06-23
 
 ### Added

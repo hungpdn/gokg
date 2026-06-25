@@ -53,8 +53,6 @@ homebrew_casks:
   - name: gokg
     ids:
       - release-archives
-    binaries:
-      - gokg
     repository:
       owner: hungpdn
       name: homebrew-tap

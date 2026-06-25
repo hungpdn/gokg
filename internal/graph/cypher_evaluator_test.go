@@ -172,6 +172,51 @@ func TestExecuteCypher_EdgeWhereChecksAllEdgesBetweenPair(t *testing.T) {
 	assert.Equal(t, "IMPORTS", res[0]["r.Type"])
 }
 
+func TestExecuteCypherRouteTopology(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+
+	owner := &parser.Node{ID: "pkg.register", Type: parser.NodeTypeFunc, Name: "register", PkgPath: "pkg"}
+	route := &parser.Node{ID: "pkg/routes.go::route:GET:/healthz", Type: parser.NodeTypeRoute, Name: "GET /healthz", PkgPath: "pkg"}
+	handler := &parser.Node{ID: "pkg.handleHealth", Type: parser.NodeTypeFunc, Name: "handleHealth", PkgPath: "pkg"}
+
+	for _, node := range []*parser.Node{owner, route, handler} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: owner.ID,
+		To:   route.ID,
+		Type: parser.EdgeTypeRegistersRoute,
+	}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{
+		From: route.ID,
+		To:   handler.ID,
+		Type: parser.EdgeTypeReferences,
+	}))
+
+	for _, test := range []struct {
+		query string
+		want  map[string]interface{}
+	}{
+		{
+			query: `MATCH (owner:FUNC)-[e:REGISTERS_ROUTE]->(r:ROUTE) RETURN owner.Name, r.Name`,
+			want:  map[string]interface{}{"owner.Name": "register", "r.Name": "GET /healthz"},
+		},
+		{
+			query: `MATCH (r:ROUTE)-[e:REFERENCES]->(handler:FUNC) RETURN r.Name, handler.Name`,
+			want:  map[string]interface{}{"r.Name": "GET /healthz", "handler.Name": "handleHealth"},
+		},
+	} {
+		q, err := cypher.NewParser(cypher.NewLexer(test.query)).ParseQuery()
+		require.NoError(t, err)
+		rows, err := g.Query().ExecuteCypher(q)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, test.want, map[string]interface{}(rows[0]))
+	}
+}
+
 func TestExecuteCypherLimitReturnsProjectedRows(t *testing.T) {
 	g := NewGraph(nil)
 	ctx := context.Background()

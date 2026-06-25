@@ -4,10 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
@@ -79,34 +79,21 @@ func TestWatcher_DebounceAndUpdate(t *testing.T) {
 	w.delay = 10 * time.Millisecond
 	w.mu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	called := false
+	updateCalls := make(chan struct{}, 4)
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
-		defer wg.Done()
-		called = true
-		return update(updateCtx)
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
 	})
 
 	// Manually trigger debounce for the directory
 	w.debounce(ctx, dir)
 
 	// Wait for the debounce to execute the runUpdate callback
-	c := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(c)
-	}()
-
-	select {
-	case <-c:
-		if !called {
-			t.Errorf("expected runUpdate to be called")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timeout waiting for debounce to trigger runUpdate")
-	}
+	waitForUpdateCalls(t, updateCalls, 2, 2*time.Second)
 }
 
 func TestWatcher_Start_FSNotify(t *testing.T) {
@@ -133,14 +120,14 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	w.delay = 10 * time.Millisecond
 	w.mu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	called := false
+	updateCalls := make(chan struct{}, 4)
 	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
-		defer wg.Done()
-		called = true
-		return update(updateCtx)
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
 	})
 
 	if err := w.Start(ctx); err != nil {
@@ -155,20 +142,7 @@ func TestWatcher_Start_FSNotify(t *testing.T) {
 	// speed of go/packages on Windows CI.
 	requireNoError(t, os.Remove(mainGoPath))
 
-	c := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(c)
-	}()
-
-	select {
-	case <-c:
-		if !called {
-			t.Errorf("expected runUpdate to be called by fsnotify event")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("timeout waiting for fsnotify event to trigger runUpdate")
-	}
+	waitForUpdateCalls(t, updateCalls, 2, 3*time.Second)
 }
 
 func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
@@ -200,6 +174,152 @@ func TestWatcher_RemovesPackageSnapshotWhenNoGoFilesRemain(t *testing.T) {
 	_, err = g.Query().GetDependencies("testmodule.main")
 	if err == nil {
 		t.Fatalf("expected removed package node to be missing")
+	}
+}
+
+func TestWatcher_AddsStructureForGoFileInNewFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	workerDir := filepath.Join(dir, "worker")
+	requireNoError(t, os.MkdirAll(workerDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(workerDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	w.updatePackage(ctx, workerDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	requireTreePath(t, tree, "worker", "testmodule/worker")
+}
+
+func TestWatcher_RefreshesStructureForCreatedNonGoFile(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+
+	initial, err := p.BuildRepositoryStructure(ctx, dir, nil)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, initial))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	w.mu.Lock()
+	w.delay = 10 * time.Millisecond
+	w.mu.Unlock()
+
+	updateCalls := make(chan struct{}, 1)
+	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		err := update(updateCtx)
+		select {
+		case updateCalls <- struct{}{}:
+		default:
+		}
+		return err
+	})
+
+	readmePath := filepath.Join(dir, "README.md")
+	requireNoError(t, os.WriteFile(readmePath, []byte("# test\n"), 0o644))
+	w.handleEvent(ctx, fsnotify.Event{Name: readmePath, Op: fsnotify.Create})
+	waitForUpdateCalls(t, updateCalls, 1, 2*time.Second)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:     2,
+		IncludeFiles: true,
+	})
+	requireNoError(t, err)
+	if !treeContainsName(tree, "README.md") {
+		t.Fatalf("expected created non-Go file in repository structure")
+	}
+
+	skippedPath := filepath.Join(dir, ".DS_Store")
+	requireNoError(t, os.WriteFile(skippedPath, []byte("ignored"), 0o644))
+	w.handleEvent(ctx, fsnotify.Event{Name: skippedPath, Op: fsnotify.Create})
+	tree, err = g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:     2,
+		IncludeFiles: true,
+	})
+	requireNoError(t, err)
+	if treeContainsName(tree, ".DS_Store") {
+		t.Fatalf("expected skipped file to stay out of repository structure")
+	}
+}
+
+func TestWatcher_RemovesStructureForDeletedFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	workerDir := filepath.Join(dir, "worker")
+	requireNoError(t, os.MkdirAll(workerDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(workerDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	result, err := p.ParseWorkspace(ctx, dir)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, result))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	requireNoError(t, os.RemoveAll(workerDir))
+	w.removePathAndRefreshStructure(ctx, workerDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	if treeContainsID(tree, "testmodule/worker") || treeContainsName(tree, "worker") {
+		t.Fatalf("expected deleted worker folder/package to be absent from repository structure")
+	}
+	if _, err := g.Query().GetDependencies("testmodule/worker.Work"); err == nil {
+		t.Fatalf("expected deleted worker package snapshot to be removed")
+	}
+}
+
+func TestWatcher_RefreshesStructureForRenamedFolder(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	oldDir := filepath.Join(dir, "worker")
+	newDir := filepath.Join(dir, "renamed")
+	requireNoError(t, os.MkdirAll(oldDir, 0o755))
+	requireNoError(t, os.WriteFile(filepath.Join(oldDir, "worker.go"), []byte("package worker\n\nfunc Work() {}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	result, err := p.ParseWorkspace(ctx, dir)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, result))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	requireNoError(t, os.Rename(oldDir, newDir))
+	w.removePathAndRefreshStructure(ctx, oldDir)
+
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:        4,
+		IncludePackages: true,
+	})
+	requireNoError(t, err)
+	if treeContainsID(tree, "testmodule/worker") || treeContainsID(tree, "folder:worker") {
+		t.Fatalf("expected old worker folder/package to be absent after rename")
+	}
+	requireTreePath(t, tree, "renamed", "testmodule/renamed")
+	if _, err := g.Query().GetDependencies("testmodule/renamed.Work"); err != nil {
+		t.Fatalf("expected renamed package snapshot to exist: %v", err)
 	}
 }
 
@@ -248,8 +368,70 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
+func waitForUpdateCalls(t *testing.T, updateCalls <-chan struct{}, want int, timeout time.Duration) {
+	t.Helper()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for i := 0; i < want; i++ {
+		select {
+		case <-updateCalls:
+		case <-timer.C:
+			t.Fatalf("timeout waiting for watcher update callback %d of %d", i+1, want)
+		}
+	}
+}
+
 func closeTestWatcher(t *testing.T, w *Watcher) {
 	t.Helper()
 
 	requireNoError(t, w.watcher.Close())
+}
+
+func requireTreePath(t *testing.T, root *graph.RepositoryStructureNode, folderName string, packageID string) {
+	t.Helper()
+	if root == nil {
+		t.Fatalf("repository structure root is nil")
+	}
+	for _, child := range root.Children {
+		if child.Node != nil && child.Node.Name == folderName {
+			for _, grandchild := range child.Children {
+				if grandchild.Node != nil && grandchild.Node.ID == packageID {
+					return
+				}
+			}
+		}
+	}
+	t.Fatalf("expected repository structure to contain folder %q with package %q", folderName, packageID)
+}
+
+func treeContainsID(root *graph.RepositoryStructureNode, id string) bool {
+	if root == nil || root.Node == nil {
+		return false
+	}
+	if root.Node.ID == id {
+		return true
+	}
+	for _, child := range root.Children {
+		if treeContainsID(child, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func treeContainsName(root *graph.RepositoryStructureNode, name string) bool {
+	if root == nil || root.Node == nil {
+		return false
+	}
+	if root.Node.Name == name {
+		return true
+	}
+	for _, child := range root.Children {
+		if treeContainsName(child, name) {
+			return true
+		}
+	}
+	return false
 }
