@@ -27,7 +27,7 @@ GoKG is intentionally focused on Go. Choose a polyglot or visualization-first to
 ## Key Features
 
 - **Go-native semantic parsing**: Extracts packages, files, folders, structs, interfaces, functions, methods, variables, channels, goroutines, HTTP routes, external boundaries, repos, and workspaces.
-- **HTTP route topology**: Detects static `net/http` and Gin registrations, including static Gin group prefixes, and links routes to their registrars and handlers.
+- **HTTP route topology**: Detects static `net/http` `Handle`/`HandleFunc` registrations plus Gin route/static registrations, including static Gin group prefixes and middleware, and links routes to their registrars and handlers.
 - **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`, and `REGISTERS_ROUTE`.
 - **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` and `HTTP` for IDEs and coding agents.

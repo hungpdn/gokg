@@ -224,9 +224,11 @@ hard limits of depth 32 and 5,000 nodes.
 
 ### HTTP Route Topology
 
-GoKG extracts compile-time `net/http` and Gin route patterns. Gin group
-prefixes are resolved when their values remain static within the registering
-function. Dynamic route patterns and dynamic group factories are skipped.
+GoKG extracts compile-time `net/http` `Handle`/`HandleFunc` patterns and Gin
+route/static patterns. Gin group prefixes and group middleware are resolved
+when their values remain static within the registering function. Dynamic route
+patterns, dynamic group factories, and routes registered through unknown group
+parameters are skipped.
 
 ```cypher
 -- Functions, methods, and goroutines that register routes

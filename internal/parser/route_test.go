@@ -25,18 +25,31 @@ const healthPattern = "/healthz"
 type fakeMux struct{}
 
 func (fakeMux) HandleFunc(string, func(http.ResponseWriter, *http.Request)) {}
+func (fakeMux) Handle(string, http.Handler)                                 {}
 func (fakeMux) GET(string, func(http.ResponseWriter, *http.Request))        {}
 
 func handle(http.ResponseWriter, *http.Request) {}
 
 func register(mux *http.ServeMux) {
 	mux.HandleFunc(healthPattern, handle)
+	mux.Handle("GET /mux-handle", http.HandlerFunc(handle))
 	http.HandleFunc("GET /ready", handle)
 	http.HandleFunc("GET /same", handle)
 	http.HandleFunc("POST /same", handle)
+	http.Handle("/plain-handle", http.HandlerFunc(handle))
+	localPattern := "/local"
+	http.HandleFunc(localPattern, handle)
+	base := "/base"
+	http.Handle("PATCH "+base+"/handled", http.HandlerFunc(handle))
+	conditionalPattern := "/conditional"
+	if len(healthPattern) > 0 {
+		conditionalPattern = "/changed"
+	}
+	http.HandleFunc(conditionalPattern, handle)
 
 	var fake fakeMux
 	fake.HandleFunc("/fake", handle)
+	fake.Handle("/fake-handle", http.HandlerFunc(handle))
 	fake.GET("/also-fake", handle)
 }
 `)
@@ -50,10 +63,14 @@ func register(mux *http.ServeMux) {
 	registerID := "example.com/routes.register"
 	handlerID := "example.com/routes.handle"
 	expected := map[string]string{
-		sourceID + "::route:ANY:/healthz": "ANY /healthz",
-		sourceID + "::route:GET:/ready":   "GET /ready",
-		sourceID + "::route:GET:/same":    "GET /same",
-		sourceID + "::route:POST:/same":   "POST /same",
+		sourceID + "::route:ANY:/healthz":        "ANY /healthz",
+		sourceID + "::route:GET:/mux-handle":     "GET /mux-handle",
+		sourceID + "::route:GET:/ready":          "GET /ready",
+		sourceID + "::route:GET:/same":           "GET /same",
+		sourceID + "::route:POST:/same":          "POST /same",
+		sourceID + "::route:ANY:/plain-handle":   "ANY /plain-handle",
+		sourceID + "::route:ANY:/local":          "ANY /local",
+		sourceID + "::route:PATCH:/base/handled": "PATCH /base/handled",
 	}
 
 	nodes := nodesByID(result)
@@ -82,6 +99,8 @@ func register(mux *http.ServeMux) {
 	for _, node := range result.Nodes {
 		if node.Type == NodeTypeRoute {
 			assert.NotContains(t, node.Name, "fake")
+			assert.NotContains(t, node.Name, "conditional")
+			assert.NotContains(t, node.Name, "changed")
 		}
 	}
 	assert.Len(t, routeNodes(result), len(expected))
@@ -127,7 +146,12 @@ func (g *RouterGroup) DELETE(string, ...HandlerFunc)             {}
 func (g *RouterGroup) HEAD(string, ...HandlerFunc)               {}
 func (g *RouterGroup) OPTIONS(string, ...HandlerFunc)            {}
 func (g *RouterGroup) Any(string, ...HandlerFunc)                {}
-`)
+func (g *RouterGroup) Handle(string, string, ...HandlerFunc)     {}
+func (g *RouterGroup) Static(string, string)                     {}
+func (g *RouterGroup) StaticFile(string, string)                 {}
+func (g *RouterGroup) StaticFS(string, interface{})              {}
+func (g *RouterGroup) StaticFileFS(string, string, interface{})  {}
+	`)
 	writeTestFile(t, filepath.Join(dir, "routes.go"), `package ginapp
 
 import "github.com/gin-gonic/gin"
@@ -145,12 +169,30 @@ func register() {
 
 	api := r.Group("/api")
 	api.POST("/items", middleware, handle)
+	itemPath := "/from-var"
+	api.GET(itemPath, handle)
+	handleMethod := "PATCH"
+	api.Handle(handleMethod, "/handled", handle)
+	branchPath := "/branch"
+	if len(adminPrefix) > 0 {
+		branchPath = "/changed-branch"
+	}
+	api.GET(branchPath, handle)
+	api.Static("/assets", "./public")
+	api.StaticFile("/favicon.ico", "./favicon.ico")
+	api.StaticFS("/downloads", nil)
+	api.StaticFileFS("/robots.txt", "./robots.txt", nil)
 	v1 := api.Group("/v1")
 	v1.PUT("/items/:id", handle)
 	r.Group("/inline").Group("/v2").DELETE("/items", handle)
 
 	admin := r.Group(adminPrefix)
 	admin.Any("/status", handle)
+
+	secure := r.Group("/secure", middleware)
+	secure.GET("/items", handle)
+	version := "/v2"
+	secure.Group(version, middleware).GET("/nested", handle)
 
 	var options = r.Group("/opts")
 	options.OPTIONS("/x", handle)
@@ -211,27 +253,45 @@ func closures() {
 	middlewareID := "example.com/ginapp.middleware"
 	handlerID := "example.com/ginapp.handle"
 
-	expected := map[string]string{
-		"GET:/root":               registerID,
-		"POST:/api/items":         registerID,
-		"PUT:/api/v1/items/:id":   registerID,
-		"DELETE:/inline/v2/items": registerID,
-		"ANY:/admin/status":       registerID,
-		"OPTIONS:/opts/x":         registerID,
-		"HEAD:/assigned/x":        registerID,
-		"GET:/shadow/inside":      registerID,
-		"PATCH:/reassigned/ok":    registerID,
-		"PATCH:/captured/inside":  closuresID,
+	type expectedRoute struct {
+		ownerID string
+		refs    []string
+	}
+	expected := map[string]expectedRoute{
+		"GET:/root":                     {ownerID: registerID, refs: []string{handlerID}},
+		"POST:/api/items":               {ownerID: registerID, refs: []string{middlewareID, handlerID}},
+		"GET:/api/from-var":             {ownerID: registerID, refs: []string{handlerID}},
+		"PATCH:/api/handled":            {ownerID: registerID, refs: []string{handlerID}},
+		"GET:/api/assets/*filepath":     {ownerID: registerID},
+		"HEAD:/api/assets/*filepath":    {ownerID: registerID},
+		"GET:/api/favicon.ico":          {ownerID: registerID},
+		"HEAD:/api/favicon.ico":         {ownerID: registerID},
+		"GET:/api/downloads/*filepath":  {ownerID: registerID},
+		"HEAD:/api/downloads/*filepath": {ownerID: registerID},
+		"GET:/api/robots.txt":           {ownerID: registerID},
+		"HEAD:/api/robots.txt":          {ownerID: registerID},
+		"PUT:/api/v1/items/:id":         {ownerID: registerID, refs: []string{handlerID}},
+		"DELETE:/inline/v2/items":       {ownerID: registerID, refs: []string{handlerID}},
+		"ANY:/admin/status":             {ownerID: registerID, refs: []string{handlerID}},
+		"GET:/secure/items":             {ownerID: registerID, refs: []string{middlewareID, handlerID}},
+		"GET:/secure/v2/nested":         {ownerID: registerID, refs: []string{middlewareID, handlerID}},
+		"OPTIONS:/opts/x":               {ownerID: registerID, refs: []string{handlerID}},
+		"HEAD:/assigned/x":              {ownerID: registerID, refs: []string{handlerID}},
+		"GET:/shadow/inside":            {ownerID: registerID, refs: []string{handlerID}},
+		"PATCH:/reassigned/ok":          {ownerID: registerID, refs: []string{handlerID}},
+		"PATCH:/captured/inside":        {ownerID: closuresID, refs: []string{handlerID}},
 	}
 
 	nodes := nodesByID(result)
-	for routeSuffix, ownerID := range expected {
+	for routeSuffix, want := range expected {
 		routeID := sourceID + "::route:" + routeSuffix
 		route := nodes[routeID]
 		require.NotNil(t, route, routeID)
 		assert.Equal(t, NodeTypeRoute, route.Type)
-		assert.True(t, hasEdge(result, ownerID, routeID, EdgeTypeRegistersRoute))
-		assert.True(t, hasEdge(result, routeID, handlerID, EdgeTypeReferences))
+		assert.True(t, hasEdge(result, want.ownerID, routeID, EdgeTypeRegistersRoute))
+		for _, refID := range want.refs {
+			assert.True(t, hasEdge(result, routeID, refID, EdgeTypeReferences), "%s references %s", routeID, refID)
+		}
 	}
 
 	postRouteID := sourceID + "::route:POST:/api/items"
@@ -257,6 +317,8 @@ func closures() {
 		sourceID + "::route:GET:/skip",
 		sourceID + "::route:GET:/changed/skip",
 		sourceID + "::route:GET:/changed-in-loop/skip",
+		sourceID + "::route:GET:/api/branch",
+		sourceID + "::route:GET:/api/changed-branch",
 	} {
 		assert.Nil(t, nodes[forbidden], forbidden)
 	}
