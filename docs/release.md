@@ -19,19 +19,25 @@ Use this checklist for tagged GoKG releases.
    go test ./...
    ```
 
-5. Run the self-analysis baseline:
+5. Check for reachable vulnerabilities:
+
+   ```bash
+   govulncheck ./...
+   ```
+
+6. Run the self-analysis baseline:
 
    ```bash
    gokg analyze --db /tmp/gokg-public-baseline --rebuild --tests
    ```
 
-6. Validate GoReleaser configuration:
+7. Validate GoReleaser configuration:
 
    ```bash
    goreleaser check
    ```
 
-7. Optionally run a local snapshot release:
+8. Optionally run a local snapshot release:
 
    ```bash
    goreleaser release --snapshot --clean --skip=publish

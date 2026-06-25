@@ -1,7 +1,7 @@
 # GoKG - Golang Knowledge Graph
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/cmd/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg/cmd/gokg)
-![Go Version](https://img.shields.io/badge/go-1.25-blue)
+![Go Version](https://img.shields.io/badge/go-1.25.11-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
@@ -40,7 +40,7 @@ GoKG is intentionally focused on Go. Choose a polyglot or visualization-first to
 
 ## Installation
 
-GoKG currently targets Go `1.25.0`.
+GoKG requires Go `1.25.11` or newer.
 
 ### Install with Go
 

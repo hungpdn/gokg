@@ -142,6 +142,9 @@ func (w *Watcher) handleEvent(ctx context.Context, event fsnotify.Event) {
 	}
 
 	if (event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) && !strings.HasSuffix(event.Name, ".go") {
+		if parser.ShouldSkipFile(filepath.Base(event.Name)) {
+			return
+		}
 		w.removePathAndRefreshStructure(ctx, event.Name)
 		return
 	}
@@ -344,17 +347,22 @@ func (w *Watcher) removePathAndRefreshStructure(ctx context.Context, path string
 
 	runUpdate := w.currentUpdateRunner()
 	pkgPaths := w.g.PackagePathsUnderDir(path)
-	if len(pkgPaths) > 0 {
-		if err := runUpdate(ctx, func(ctx context.Context) error {
-			for _, pkgPath := range pkgPaths {
-				if err := w.g.RemovePackage(ctx, pkgPath); err != nil {
-					return fmt.Errorf("remove deleted package %s: %w", pkgPath, err)
-				}
-			}
-			return nil
-		}); err != nil {
-			log.Printf("Error removing graph snapshot for deleted path %s: %v", path, err)
+	if len(pkgPaths) == 0 {
+		if err := w.refreshRepositoryStructureLocked(ctx, runUpdate); err != nil {
+			log.Printf("Error refreshing repository structure for removed path %s: %v", path, err)
 		}
+		return
+	}
+
+	if err := runUpdate(ctx, func(ctx context.Context) error {
+		for _, pkgPath := range pkgPaths {
+			if err := w.g.RemovePackage(ctx, pkgPath); err != nil {
+				return fmt.Errorf("remove deleted package %s: %w", pkgPath, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("Error removing graph snapshot for deleted path %s: %v", path, err)
 	}
 	w.updateTreeLocked(ctx, w.rootDir, runUpdate)
 	debug.FreeOSMemory()
