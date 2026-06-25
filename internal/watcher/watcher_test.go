@@ -255,6 +255,73 @@ func TestWatcher_RefreshesStructureForCreatedNonGoFile(t *testing.T) {
 	}
 }
 
+func TestWatcher_RemovesNonGoFileWithoutReparsingPackages(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	readmePath := filepath.Join(dir, "README.md")
+	requireNoError(t, os.WriteFile(readmePath, []byte("# test\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	result, err := p.ParseWorkspace(ctx, dir)
+	requireNoError(t, err)
+	requireNoError(t, g.BuildFromParseResult(ctx, result))
+
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	updateCalls := 0
+	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		updateCalls++
+		return update(updateCtx)
+	})
+
+	requireNoError(t, os.Remove(readmePath))
+	w.handleEvent(ctx, fsnotify.Event{Name: readmePath, Op: fsnotify.Remove})
+
+	if updateCalls != 1 {
+		t.Fatalf("expected one structure-only update, got %d", updateCalls)
+	}
+	tree, err := g.Query().GetRepositoryStructure(graph.RepositoryStructureOptions{
+		MaxDepth:     2,
+		IncludeFiles: true,
+	})
+	requireNoError(t, err)
+	if treeContainsName(tree, "README.md") {
+		t.Fatalf("expected removed non-Go file to be absent from repository structure")
+	}
+	if _, err := g.Query().GetDependencies("testmodule.main"); err != nil {
+		t.Fatalf("expected package snapshot to remain after non-Go file removal: %v", err)
+	}
+}
+
+func TestWatcher_IgnoresRemovedSkippedFile(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	skippedPath := filepath.Join(dir, ".DS_Store")
+	requireNoError(t, os.WriteFile(skippedPath, []byte("ignored"), 0o644))
+
+	g := graph.NewGraph(nil)
+	p := parser.NewParser("testmodule", "testmodule")
+	w, err := NewWatcher(g, p, dir)
+	requireNoError(t, err)
+	defer closeTestWatcher(t, w)
+
+	updateCalls := 0
+	w.SetUpdateRunner(func(updateCtx context.Context, update func(context.Context) error) error {
+		updateCalls++
+		return update(updateCtx)
+	})
+
+	requireNoError(t, os.Remove(skippedPath))
+	w.handleEvent(ctx, fsnotify.Event{Name: skippedPath, Op: fsnotify.Remove})
+
+	if updateCalls != 0 {
+		t.Fatalf("expected skipped file removal to trigger no updates, got %d", updateCalls)
+	}
+}
+
 func TestWatcher_RemovesStructureForDeletedFolder(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)

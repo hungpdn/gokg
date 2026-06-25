@@ -4,7 +4,7 @@ All notable changes to GoKG will be documented in this file.
 
 The format follows Keep a Changelog, and this project uses semantic versioning once tagged releases begin.
 
-## [v0.1.0-alpha.3] - 2026-06-25
+## [v0.1.0-alpha.3] - 2026-06-26
 
 ### Added
 
@@ -19,12 +19,16 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - Repository structure snapshots are now bounded for MCP responses to keep agent output predictable.
 - Cypher and MCP docs now describe route nodes, route edges, and repository structure queries.
 - README now includes a clearer "Why it matters?" section and route-aware feature summary.
+- Raised the minimum Go toolchain to `1.25.11` to include current standard-library security fixes.
+- Updated GitHub Actions and Go tooling dependencies.
+- Added `govulncheck` gates to CI, the release workflow, and the release checklist.
 
 ### Fixed
 
 - Prevented parser stack overflows on recursive Go type graphs.
 - Broadened HTTP route extraction so more `net/http` and Gin registration patterns are captured consistently.
 - Hardened watcher synchronization and repository structure refresh behavior.
+- Prevented non-Go file removals from triggering full-repository reparses and ignored removal events for skipped files.
 
 ## [v0.1.0-alpha.2] - 2026-06-23
 
