@@ -42,8 +42,8 @@ Use this checklist for tagged GoKG releases.
 Use semantic version tags. Alpha releases should include an alpha suffix.
 
 ```bash
-git tag v0.1.0-alpha.2
-git push origin v0.1.0-alpha.2
+git tag v0.1.0-alpha.3
+git push origin v0.1.0-alpha.3
 ```
 
 ## Verify
