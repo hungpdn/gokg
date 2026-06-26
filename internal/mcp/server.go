@@ -10,15 +10,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hungpdn/gokg/internal/cypher"
 	"github.com/hungpdn/gokg/internal/graph"
+	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/version"
 )
 
 type Server struct {
-	graph *graph.Graph
+	graph       *graph.Graph
+	impactRepos []impact.Repo
 }
+
+type ServerOption func(*Server)
 
 const (
 	maxStdioMessageBytes = 4 << 20
@@ -34,8 +37,20 @@ var supportedMCPProtocolVersions = map[string]struct{}{
 	legacyMCPProtocolVersion: {},
 }
 
-func NewServer(g *graph.Graph) *Server {
-	return &Server{graph: g}
+func NewServer(g *graph.Graph, opts ...ServerOption) *Server {
+	s := &Server{graph: g}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
+}
+
+func WithImpactRepos(repos []impact.Repo) ServerOption {
+	return func(s *Server) {
+		s.impactRepos = append([]impact.Repo(nil), repos...)
+	}
 }
 
 type Request struct {
@@ -136,210 +151,9 @@ func negotiateMCPProtocolVersion(requested string) string {
 }
 
 func (s *Server) handleToolsList(req *Request) *Response {
-	tools := []map[string]interface{}{
-		{
-			"name":        "get_dependencies",
-			"description": "Returns nodes reached by dependency edges (CALLS, IMPORTS, REFERENCES, INSTANTIATES), formatted as a Markdown list",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID (e.g. package path, func ID)"},
-				},
-				"required": []string{"node_id"},
-			},
-		},
-		{
-			"name":        "get_blast_radius",
-			"description": "Returns all nodes that depend on the given node, formatted as a Markdown list",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID"},
-				},
-				"required": []string{"node_id"},
-			},
-		},
-		{
-			"name":        "get_concurrency_flow",
-			"description": "Returns goroutines and channels connected to this node",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID"},
-				},
-				"required": []string{"node_id"},
-			},
-		},
-		{
-			"name":        "get_concurrency_graph",
-			"description": "Returns goroutine and channel topology connected to a function, formatted as Markdown",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified function node ID"},
-				},
-				"required": []string{"node_id"},
-			},
-		},
-		{
-			"name":        "get_implementations",
-			"description": "Returns all structs that implement a given interface",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"interface_id": map[string]interface{}{"type": "string", "description": "Fully qualified interface node ID"},
-				},
-				"required": []string{"interface_id"},
-			},
-		},
-		{
-			"name":        "get_source_code",
-			"description": "Reads the actual Go source code of a function, type, or route registration node from disk",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID with line info"},
-				},
-				"required": []string{"node_id"},
-			},
-		},
-		{
-			"name":        "get_repository_structure",
-			"description": "Returns the repository folder/package/file structure from the knowledge graph, formatted as a Markdown tree",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"repo_id": map[string]interface{}{"type": "string", "description": "Repository ID in workspace mode. Optional for single-repo graphs."},
-					"root":    map[string]interface{}{"type": "string", "description": "Folder node ID or repository-relative path. Defaults to the repository root."},
-					"max_depth": map[string]interface{}{
-						"type":        "integer",
-						"description": fmt.Sprintf("Maximum tree depth to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxDepth),
-						"minimum":     1,
-						"maximum":     graph.RepositoryStructureMaxDepth,
-					},
-					"max_nodes": map[string]interface{}{
-						"type":        "integer",
-						"description": fmt.Sprintf("Maximum number of tree nodes to return. Defaults to %d.", graph.RepositoryStructureDefaultMaxNodes),
-						"minimum":     1,
-						"maximum":     graph.RepositoryStructureMaxNodes,
-					},
-					"include_packages": map[string]interface{}{"type": "boolean", "description": "Include package nodes. Defaults to true."},
-					"include_files":    map[string]interface{}{"type": "boolean", "description": "Include file nodes below package nodes. Defaults to false."},
-				},
-			},
-		},
-		{
-			"name":        "find_path",
-			"description": "Finds the shortest call path between two nodes using BFS",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"source_id": map[string]interface{}{"type": "string", "description": "Fully qualified source node ID"},
-					"target_id": map[string]interface{}{"type": "string", "description": "Fully qualified target node ID"},
-				},
-				"required": []string{"source_id", "target_id"},
-			},
-		},
-		{
-			"name":        "search_nodes",
-			"description": "Searches for nodes by short name, struct name, or package name (case-insensitive) and returns their fully qualified Node IDs.",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{"type": "string", "description": "The string to search for (e.g. 'ParseWorkspace')"},
-				},
-				"required": []string{"query"},
-			},
-		},
-		{
-			"name": "execute_cypher",
-			"description": `Executes a GoKG Cypher query against the Go source code knowledge graph.
-
-SYNTAX: MATCH <pattern> [WHERE <conditions>] RETURN <items> LIMIT <positive n>
-
-For MCP execute_cypher calls, LIMIT is required to protect clients from unbounded result sets.
-
-NODE TYPES (use in patterns as :TYPE):
-  PACKAGE    – a Go package (e.g. github.com/org/repo/internal/parser)
-  FILE       – a .go source file
-  FOLDER     – a physical directory on disk
-  FUNC       – a top-level function
-  METHOD     – a method on a struct
-  CONSTANT   – a package-scope constant
-  VARIABLE   – a package-scope variable
-  TYPE_ALIAS – a type alias or named non-struct/non-interface type
-  STRUCT     – a struct type
-  INTERFACE  – an interface type
-  CHANNEL    – a channel variable (e.g. chan int)
-  GOROUTINE  – a goroutine spawned with 'go'
-  ROUTE      – an HTTP route registration (e.g. GET /healthz)
-  BOUNDARY   – an external dependency (outside the module)
-  REPO       – a repository root (multi-repo workspace)
-  WORKSPACE  – a multi-repo workspace root
-
-EDGE TYPES (use in patterns as :TYPE):
-  CALLS          – function/method calls another function/method
-  CONTAINS       – package contains file, file contains func/struct
-  IMPORTS        – file imports a package
-  REFERENCES     – symbol references a package-scope symbol or type
-  INSTANTIATES   – function or variable creates a composite literal of a type
-  IMPLEMENTS     – struct implements an interface
-  SPAWNS         – function spawns a goroutine
-  SENDS_TO       – function sends to a channel
-  RECEIVES_FROM  – function receives from a channel
-  REGISTERS_ROUTE – function, method, or goroutine registers an HTTP route
-
-NODE PROPERTIES (use in WHERE and RETURN):
-  Name      – short identifier (e.g. "ParseWorkspace", "Storage")
-  ID        – fully-qualified unique ID (e.g. "github.com/org/repo/pkg.FuncName")
-  PkgPath   – Go package import path
-  FilePath  – absolute path to the source file
-  Type      – the NodeType string (e.g. "FUNC")
-  RepoID    – repository ID in workspace mode
-
-EDGE PROPERTIES (use in WHERE and RETURN):
-  Type      – the EdgeType string (e.g. "CALLS")
-  From      – source node ID
-  To        – target node ID
-  RepoID    – repository ID that discovered the edge
-
-OPERATORS in WHERE:
-  =          – exact match        (n.Name = "main")
-  !=         – not equal          (n.Name != "init")
-  CONTAINS   – substring match    (n.PkgPath CONTAINS "internal")
-  AND        – combine filters    (a.Name = "A" AND b.Type = "FUNC")
-
-Validation is strict: unknown aliases, node/edge types, properties, and trailing tokens return errors.
-
-PATTERN SYNTAX:
-  (n:FUNC)                         – node only
-  (a:FUNC)-[r:CALLS]->(b:FUNC)     – outbound edge
-  (a:FUNC)<-[r:CALLS]-(b:FUNC)     – inbound edge
-  (a)-[r]-(b)                      – any direction, any type
-
-EXAMPLES:
-  MATCH (n:FUNC) WHERE n.PkgPath CONTAINS "parser" RETURN n LIMIT 20
-  MATCH (a:FUNC)-[r:CALLS]->(b:FUNC) WHERE a.Name = "Analyze" RETURN b.Name LIMIT 10
-  MATCH (a:FUNC)-[r:CALLS]->(b) WHERE a.Name = "Analyze" AND b.Type != "BOUNDARY" RETURN b.Name, b.Type LIMIT 20
-  MATCH (s:STRUCT)-[r:IMPLEMENTS]->(i:INTERFACE) RETURN s.Name, i.Name LIMIT 20
-  MATCH (f:FUNC)-[r:SPAWNS]->(g:GOROUTINE) RETURN f.Name, g.Name LIMIT 20
-  MATCH (f:FUNC)-[r:SENDS_TO]->(c:CHANNEL) WHERE f.PkgPath CONTAINS "worker" RETURN f.Name, c.Name LIMIT 20
-  MATCH (owner)-[r:REGISTERS_ROUTE]->(route:ROUTE) RETURN owner.Name, route.Name LIMIT 50
-  MATCH (route:ROUTE)-[r:REFERENCES]->(handler) RETURN route.Name, handler.Name LIMIT 50
-  MATCH (n:INTERFACE) WHERE n.Name CONTAINS "Storage" RETURN n LIMIT 20
-
-Always include MATCH, RETURN, and a positive LIMIT after RETURN.`,
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "A GoKG Cypher query string. Must include MATCH, RETURN, and LIMIT. LIMIT comes after RETURN. See tool description for full syntax and node/edge type reference.",
-					},
-				},
-				"required": []string{"query"},
-			},
-		},
+	tools := make([]map[string]interface{}, 0, len(s.toolDefinitions()))
+	for _, tool := range s.toolDefinitions() {
+		tools = append(tools, tool.metadata())
 	}
 
 	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
@@ -348,129 +162,17 @@ Always include MATCH, RETURN, and a positive LIMIT after RETURN.`,
 }
 
 func (s *Server) handleToolsCall(req *Request) *Response {
-	var params struct {
-		Name      string `json:"name"`
-		Arguments struct {
-			NodeID      string `json:"node_id"`
-			InterfaceID string `json:"interface_id"`
-			SourceID    string `json:"source_id"`
-			TargetID    string `json:"target_id"`
-			Query       string `json:"query"`
-			RepoID      string `json:"repo_id"`
-			Root        string `json:"root"`
-			MaxDepth    int    `json:"max_depth"`
-			MaxNodes    int    `json:"max_nodes"`
-
-			IncludePackages *bool `json:"include_packages"`
-			IncludeFiles    *bool `json:"include_files"`
-		} `json:"arguments"`
-	}
+	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
 	}
 
-	qb := s.graph.Query()
-
-	switch params.Name {
-	case "get_dependencies":
-		nodes, err := qb.GetDependencies(params.Arguments.NodeID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
+	for _, tool := range s.toolDefinitions() {
+		if tool.name == params.Name {
+			return tool.handler(s, req.ID, params.Arguments)
 		}
-		return s.textResult(req.ID, formatNodeListMarkdown("Dependencies", params.Arguments.NodeID, nodes))
-
-	case "get_blast_radius":
-		nodes, err := qb.GetBlastRadius(params.Arguments.NodeID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatNodeListMarkdown("Blast Radius", params.Arguments.NodeID, nodes))
-
-	case "get_concurrency_flow":
-		nodes, err := qb.GetConcurrencyFlow(params.Arguments.NodeID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatNodeListMarkdown("Concurrency Flow", params.Arguments.NodeID, nodes))
-
-	case "get_concurrency_graph":
-		connections, err := qb.GetConcurrencyGraph(params.Arguments.NodeID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatConcurrencyGraphMarkdown(params.Arguments.NodeID, connections))
-
-	case "get_implementations":
-		nodes, err := qb.GetImplementations(params.Arguments.InterfaceID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatNodeListMarkdown("Implementations", params.Arguments.InterfaceID, nodes))
-
-	case "get_source_code":
-		code, err := qb.GetSourceCode(params.Arguments.NodeID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatSourceCodeMarkdown(params.Arguments.NodeID, code))
-
-	case "get_repository_structure":
-		includePackages := true
-		if params.Arguments.IncludePackages != nil {
-			includePackages = *params.Arguments.IncludePackages
-		}
-		includeFiles := false
-		if params.Arguments.IncludeFiles != nil {
-			includeFiles = *params.Arguments.IncludeFiles
-		}
-		tree, err := qb.GetRepositoryStructure(graph.RepositoryStructureOptions{
-			RepoID:          params.Arguments.RepoID,
-			Root:            params.Arguments.Root,
-			MaxDepth:        params.Arguments.MaxDepth,
-			MaxNodes:        params.Arguments.MaxNodes,
-			IncludePackages: includePackages,
-			IncludeFiles:    includeFiles,
-		})
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatRepositoryStructureMarkdown(tree))
-
-	case "find_path":
-		pathResults, err := qb.FindPath(params.Arguments.SourceID, params.Arguments.TargetID)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatPathMarkdown(params.Arguments.SourceID, params.Arguments.TargetID, pathResults))
-
-	case "search_nodes":
-		nodes, err := qb.SearchNodes(params.Arguments.Query)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		return s.textResult(req.ID, formatNodeListMarkdown("Search Results", params.Arguments.Query, nodes))
-
-	case "execute_cypher":
-		q, err := cypher.NewParser(cypher.NewLexer(params.Arguments.Query)).ParseQuery()
-		if err != nil {
-			return s.errorResult(req.ID, fmt.Errorf("cypher parse error: %w", err))
-		}
-		if q.Limit <= 0 {
-			return s.errorResult(req.ID, errMCPCypherLimitRequired)
-		}
-		rows, err := qb.ExecuteCypher(q)
-		if err != nil {
-			return s.errorResult(req.ID, err)
-		}
-		data, err := encodeIndentedJSON(rows)
-		if err != nil {
-			return s.errorResult(req.ID, fmt.Errorf("cypher result marshal error: %w", err))
-		}
-		return s.textResult(req.ID, formatCypherMarkdown(params.Arguments.Query, data))
-
-	default:
-		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
 	}
+	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
 }
 
 // --- Markdown formatting helpers ---

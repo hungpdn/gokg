@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,6 +23,22 @@ type ConcurrencyConnection struct {
 	Direction string       `json:"direction"`
 }
 
+// FileRange describes a changed line range in a source file. WholeFile ranges
+// match every node with the same FilePath.
+type FileRange struct {
+	FilePath  string
+	StartLine int
+	EndLine   int
+	WholeFile bool
+	RepoID    string
+}
+
+// NodeDistance is a graph node reached at a specific inbound dependency depth.
+type NodeDistance struct {
+	Node     *parser.Node `json:"node"`
+	Distance int          `json:"distance"`
+}
+
 type concurrencySeenKey struct {
 	direction string
 	fromID    int64
@@ -34,6 +51,79 @@ const maxSearchResults = 50
 // Query returns a new QueryBuilder for the graph.
 func (g *Graph) Query() *QueryBuilder {
 	return &QueryBuilder{g: g}
+}
+
+// NodesForFileRanges returns graph nodes whose source ranges overlap any file
+// range. Results are deterministic and de-duplicated by node ID.
+func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, error) {
+	qb.g.mu.RLock()
+	defer qb.g.mu.RUnlock()
+
+	results := make([]*parser.Node, 0)
+	seen := make(map[string]bool)
+	cleaned := make([]FileRange, 0, len(ranges))
+	for _, r := range ranges {
+		if r.FilePath == "" {
+			continue
+		}
+		r.FilePath = comparableFilePath(r.FilePath)
+		cleaned = append(cleaned, r)
+	}
+	if len(cleaned) == 0 {
+		return nil, nil
+	}
+
+	for _, node := range qb.g.nodes {
+		if node == nil || node.FilePath == "" {
+			continue
+		}
+		if seen[node.ID] {
+			continue
+		}
+		for _, r := range cleaned {
+			if r.RepoID != "" && node.RepoID != r.RepoID {
+				continue
+			}
+			if comparableFilePath(node.FilePath) != r.FilePath {
+				continue
+			}
+			if !r.WholeFile && !nodeOverlapsFileRange(node, r) {
+				continue
+			}
+			seen[node.ID] = true
+			results = append(results, node)
+			break
+		}
+	}
+	sortNodesByID(results)
+	return results, nil
+}
+
+func comparableFilePath(path string) string {
+	cleaned := cleanAbsPath(path)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent := filepath.Dir(cleaned)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(resolvedParent, filepath.Base(cleaned))
+	}
+	return cleaned
+}
+
+func nodeOverlapsFileRange(node *parser.Node, r FileRange) bool {
+	if node == nil || node.Lines[0] <= 0 || node.Lines[1] <= 0 || node.Lines[1] < node.Lines[0] {
+		return false
+	}
+	start := r.StartLine
+	end := r.EndLine
+	if start <= 0 || end <= 0 {
+		return false
+	}
+	if end < start {
+		start, end = end, start
+	}
+	return node.Lines[0] <= end && node.Lines[1] >= start
 }
 
 // GetDependencies returns all nodes connected by dependency edges from nodeID.
@@ -81,6 +171,103 @@ func (qb *QueryBuilder) GetBlastRadius(nodeID string) ([]*parser.Node, error) {
 	}
 	sortNodesByID(blast)
 	return blast, nil
+}
+
+// GetBlastRadiusDepth returns inbound dependency nodes up to maxDepth hops away.
+// Source nodes are excluded from the result. maxNodes <= 0 means no cap.
+func (qb *QueryBuilder) GetBlastRadiusDepth(nodeIDs []string, maxDepth int, maxNodes int) ([]NodeDistance, bool, error) {
+	qb.g.mu.RLock()
+	defer qb.g.mu.RUnlock()
+
+	if maxDepth <= 0 || len(nodeIDs) == 0 {
+		return nil, false, nil
+	}
+
+	sourceIDs := make(map[int64]bool)
+	queue := make([]NodeDistance, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		id, err := qb.requireNodeIDLocked(nodeID)
+		if err != nil {
+			return nil, false, err
+		}
+		if sourceIDs[id] {
+			continue
+		}
+		sourceIDs[id] = true
+		queue = append(queue, NodeDistance{Node: qb.g.nodes[id], Distance: 0})
+	}
+
+	seen := make(map[int64]int, len(sourceIDs))
+	for id := range sourceIDs {
+		seen[id] = 0
+	}
+	resultsByID := make(map[int64]NodeDistance)
+	truncated := false
+
+	for head := 0; head < len(queue); head++ {
+		current := queue[head]
+		if current.Node == nil || current.Distance >= maxDepth {
+			continue
+		}
+		currentID := qb.g.nodeMap[current.Node.ID]
+		nextDistance := current.Distance + 1
+
+		inboundIDs := qb.inboundDependencyNodeIDsLocked(currentID)
+		for _, fromID := range inboundIDs {
+			if sourceIDs[fromID] || qb.g.nodes[fromID] == nil {
+				continue
+			}
+			if prevDistance, ok := seen[fromID]; ok && prevDistance <= nextDistance {
+				continue
+			}
+			seen[fromID] = nextDistance
+			nd := NodeDistance{Node: qb.g.nodes[fromID], Distance: nextDistance}
+			resultsByID[fromID] = nd
+			queue = append(queue, nd)
+			if maxNodes > 0 && len(resultsByID) >= maxNodes {
+				truncated = true
+				return sortedNodeDistances(resultsByID), truncated, nil
+			}
+		}
+	}
+
+	return sortedNodeDistances(resultsByID), truncated, nil
+}
+
+func (qb *QueryBuilder) inboundDependencyNodeIDsLocked(targetID int64) []int64 {
+	ids := make([]int64, 0)
+	for fromID, outEdges := range qb.g.edges {
+		edges, ok := outEdges[targetID]
+		if !ok || !hasDependencyEdge(edges) {
+			continue
+		}
+		ids = append(ids, fromID)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		left := qb.g.nodes[ids[i]]
+		right := qb.g.nodes[ids[j]]
+		if left == nil || right == nil {
+			return ids[i] < ids[j]
+		}
+		return left.ID < right.ID
+	})
+	return ids
+}
+
+func sortedNodeDistances(resultsByID map[int64]NodeDistance) []NodeDistance {
+	results := make([]NodeDistance, 0, len(resultsByID))
+	for _, result := range resultsByID {
+		if result.Node != nil {
+			results = append(results, result)
+		}
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Distance != results[j].Distance {
+			return results[i].Distance < results[j].Distance
+		}
+		return results[i].Node.ID < results[j].Node.ID
+	})
+	return results
 }
 
 // GetConcurrencyFlow returns goroutines and channels connected to this node.

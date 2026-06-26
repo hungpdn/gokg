@@ -61,6 +61,50 @@ func TestGraphConstructionAndQuery(t *testing.T) {
 	assert.Equal(t, "chanC", flows[0].ID)
 }
 
+func TestNodesForFileRangesAndBlastRadiusDepth(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+	filePath := filepath.Join(t.TempDir(), "service.go")
+
+	nodes := []*parser.Node{
+		{ID: "pkg.Changed", Type: parser.NodeTypeFunc, Name: "Changed", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{10, 20}, RepoID: "repo-a"},
+		{ID: "pkg.Other", Type: parser.NodeTypeFunc, Name: "Other", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{30, 40}, RepoID: "repo-a"},
+		{ID: "pkg.Direct", Type: parser.NodeTypeFunc, Name: "Direct", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{50, 60}, RepoID: "repo-a"},
+		{ID: "pkg.Second", Type: parser.NodeTypeFunc, Name: "Second", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{70, 80}, RepoID: "repo-a"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Direct", To: "pkg.Changed", Type: parser.EdgeTypeCalls, RepoID: "repo-a"}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Second", To: "pkg.Direct", Type: parser.EdgeTypeReferences, RepoID: "repo-a"}))
+
+	matched, err := g.Query().NodesForFileRanges([]FileRange{{
+		FilePath:  filePath,
+		StartLine: 12,
+		EndLine:   12,
+		RepoID:    "repo-a",
+	}})
+	require.NoError(t, err)
+	require.Len(t, matched, 1)
+	assert.Equal(t, "pkg.Changed", matched[0].ID)
+
+	depthOne, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 1, 10)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, depthOne, 1)
+	assert.Equal(t, "pkg.Direct", depthOne[0].Node.ID)
+	assert.Equal(t, 1, depthOne[0].Distance)
+
+	depthTwo, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 2, 10)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, depthTwo, 2)
+	assert.Equal(t, "pkg.Direct", depthTwo[0].Node.ID)
+	assert.Equal(t, "pkg.Second", depthTwo[1].Node.ID)
+	assert.Equal(t, 2, depthTwo[1].Distance)
+}
+
 func TestDependenciesAndBlastRadiusUseSemanticDependencyEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

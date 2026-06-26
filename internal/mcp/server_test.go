@@ -166,7 +166,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 10, "Should have 10 tools registered")
+	assert.Len(t, tools, 11, "Should have 11 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
@@ -188,6 +188,7 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, toolNames["get_concurrency_graph"])
 	assert.True(t, toolNames["get_repository_structure"])
 	assert.True(t, toolNames["execute_cypher"])
+	assert.True(t, toolNames["get_change_impact"])
 	assert.Contains(t, cypherDescription, "ROUTE")
 	assert.Contains(t, cypherDescription, "REGISTERS_ROUTE")
 	assert.Contains(t, sourceDescription, "route registration")
@@ -353,6 +354,19 @@ func TestHandleCallUnknownTool(t *testing.T) {
 	require.NotNil(t, res)
 	assert.NotNil(t, res.Error)
 	assert.Contains(t, res.Error.Message, "Unknown tool")
+}
+
+func TestHandleCallChangeImpactRequiresRepoRoots(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+
+	paramsRaw := []byte(`{"name": "get_change_impact", "arguments": {}}`)
+	req := &Request{JSONRPC: "2.0", ID: 12, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Contains(t, res.Error.Message, "no repository roots were configured")
 }
 
 func TestHandleCallRepositoryStructureMarkdown(t *testing.T) {
