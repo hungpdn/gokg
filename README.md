@@ -57,6 +57,8 @@ Pin a specific tagged version when you need reproducible installs:
 go install github.com/hungpdn/gokg/cmd/gokg@<version>
 ```
 
+`go install` builds report the installed module version from Go build information. Release binaries, Homebrew, and Scoop builds also include the exact commit and build date injected by GoReleaser.
+
 ### Install with Homebrew
 
 ```bash

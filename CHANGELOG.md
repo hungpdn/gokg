@@ -4,6 +4,16 @@ All notable changes to GoKG will be documented in this file.
 
 The format follows Keep a Changelog, and this project uses semantic versioning once tagged releases begin.
 
+## [v0.1.0-alpha.4] - 2026-06-26
+
+### Changed
+
+- Release binaries now report `v`-prefixed semantic versions to match Git tags and `go install` builds.
+
+### Fixed
+
+- `gokg version` now uses Go build information as a fallback so binaries installed with `go install github.com/hungpdn/gokg/cmd/gokg@<version>` report the installed module version instead of `dev`.
+
 ## [v0.1.0-alpha.3] - 2026-06-26
 
 ### Added
