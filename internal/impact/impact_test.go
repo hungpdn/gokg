@@ -128,6 +128,25 @@ deleted file mode 100644
 	assert.Contains(t, strings.Join(report.Warnings, "\n"), "new.go")
 }
 
+func TestValidateOptionsRejectsUnsafeBaseRef(t *testing.T) {
+	for _, baseRef := range []string{
+		"--cached",
+		"-HEAD",
+		"main\nnext",
+		"main\x7f",
+	} {
+		t.Run(baseRef, func(t *testing.T) {
+			opts := NormalizeOptions(Options{BaseRef: baseRef, MaxDepth: 1, MaxNodes: 1})
+			err := ValidateOptions(opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "base ref")
+		})
+	}
+
+	opts := NormalizeOptions(Options{BaseRef: "origin/main", MaxDepth: 1, MaxNodes: 1})
+	require.NoError(t, ValidateOptions(opts))
+}
+
 type fakeRunner struct {
 	responses map[string]string
 	errors    map[string]error

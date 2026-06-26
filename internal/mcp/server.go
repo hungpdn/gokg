@@ -94,7 +94,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			continue
 		}
 
-		res := s.handleRequest(&req)
+		res := s.handleRequestContext(ctx, &req)
 		if res != nil {
 			if err := writeResponse(out, res); err != nil {
 				return err
@@ -105,6 +105,10 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) handleRequest(req *Request) *Response {
+	return s.handleRequestContext(context.Background(), req)
+}
+
+func (s *Server) handleRequestContext(ctx context.Context, req *Request) *Response {
 	if req.JSONRPC != "" && req.JSONRPC != "2.0" {
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32600, Message: "Invalid Request"}}
 	}
@@ -117,7 +121,7 @@ func (s *Server) handleRequest(req *Request) *Response {
 	case "tools/list":
 		return s.handleToolsList(req)
 	case "tools/call":
-		return s.handleToolsCall(req)
+		return s.handleToolsCall(ctx, req)
 	}
 
 	if req.ID != nil {
@@ -161,7 +165,7 @@ func (s *Server) handleToolsList(req *Request) *Response {
 	}}
 }
 
-func (s *Server) handleToolsCall(req *Request) *Response {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
@@ -169,7 +173,7 @@ func (s *Server) handleToolsCall(req *Request) *Response {
 
 	for _, tool := range s.toolDefinitions() {
 		if tool.name == params.Name {
-			return tool.handler(s, req.ID, params.Arguments)
+			return tool.handler(s, ctx, req.ID, params.Arguments)
 		}
 	}
 	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}

@@ -199,11 +199,30 @@ func NormalizeOptions(opts Options) Options {
 }
 
 func ValidateOptions(opts Options) error {
+	if err := validateBaseRef(opts.BaseRef); err != nil {
+		return err
+	}
 	if opts.MaxDepth < 1 || opts.MaxDepth > MaxDepthLimit {
 		return fmt.Errorf("max depth must be between 1 and %d", MaxDepthLimit)
 	}
 	if opts.MaxNodes < 1 || opts.MaxNodes > MaxNodesLimit {
 		return fmt.Errorf("max nodes must be between 1 and %d", MaxNodesLimit)
+	}
+	return nil
+}
+
+func validateBaseRef(baseRef string) error {
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		return fmt.Errorf("base ref is required")
+	}
+	if strings.HasPrefix(baseRef, "-") {
+		return fmt.Errorf("base ref must not start with '-'")
+	}
+	for _, r := range baseRef {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("base ref must not contain control characters")
+		}
 	}
 	return nil
 }

@@ -19,7 +19,7 @@ type toolDefinition struct {
 	name        string
 	description string
 	inputSchema map[string]interface{}
-	handler     func(*Server, interface{}, json.RawMessage) *Response
+	handler     func(*Server, context.Context, interface{}, json.RawMessage) *Response
 }
 
 func (d toolDefinition) metadata() map[string]interface{} {
@@ -183,7 +183,7 @@ func parseToolArgs[T any](raw json.RawMessage) (T, error) {
 	return args, nil
 }
 
-func (s *Server) handleGetDependenciesTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetDependenciesTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	var args struct {
 		NodeID string `json:"node_id"`
 	}
@@ -200,7 +200,7 @@ func (s *Server) handleGetDependenciesTool(id interface{}, raw json.RawMessage) 
 	return s.textResult(id, formatNodeListMarkdown("Dependencies", args.NodeID, nodes))
 }
 
-func (s *Server) handleGetBlastRadiusTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetBlastRadiusTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		NodeID string `json:"node_id"`
 	}](raw)
@@ -214,7 +214,7 @@ func (s *Server) handleGetBlastRadiusTool(id interface{}, raw json.RawMessage) *
 	return s.textResult(id, formatNodeListMarkdown("Blast Radius", args.NodeID, nodes))
 }
 
-func (s *Server) handleGetConcurrencyFlowTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetConcurrencyFlowTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		NodeID string `json:"node_id"`
 	}](raw)
@@ -228,7 +228,7 @@ func (s *Server) handleGetConcurrencyFlowTool(id interface{}, raw json.RawMessag
 	return s.textResult(id, formatNodeListMarkdown("Concurrency Flow", args.NodeID, nodes))
 }
 
-func (s *Server) handleGetConcurrencyGraphTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetConcurrencyGraphTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		NodeID string `json:"node_id"`
 	}](raw)
@@ -242,7 +242,7 @@ func (s *Server) handleGetConcurrencyGraphTool(id interface{}, raw json.RawMessa
 	return s.textResult(id, formatConcurrencyGraphMarkdown(args.NodeID, connections))
 }
 
-func (s *Server) handleGetImplementationsTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetImplementationsTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		InterfaceID string `json:"interface_id"`
 	}](raw)
@@ -256,7 +256,7 @@ func (s *Server) handleGetImplementationsTool(id interface{}, raw json.RawMessag
 	return s.textResult(id, formatNodeListMarkdown("Implementations", args.InterfaceID, nodes))
 }
 
-func (s *Server) handleGetSourceCodeTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetSourceCodeTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		NodeID string `json:"node_id"`
 	}](raw)
@@ -270,7 +270,7 @@ func (s *Server) handleGetSourceCodeTool(id interface{}, raw json.RawMessage) *R
 	return s.textResult(id, formatSourceCodeMarkdown(args.NodeID, code))
 }
 
-func (s *Server) handleGetRepositoryStructureTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetRepositoryStructureTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		RepoID          string `json:"repo_id"`
 		Root            string `json:"root"`
@@ -304,7 +304,7 @@ func (s *Server) handleGetRepositoryStructureTool(id interface{}, raw json.RawMe
 	return s.textResult(id, formatRepositoryStructureMarkdown(tree))
 }
 
-func (s *Server) handleFindPathTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleFindPathTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		SourceID string `json:"source_id"`
 		TargetID string `json:"target_id"`
@@ -319,7 +319,7 @@ func (s *Server) handleFindPathTool(id interface{}, raw json.RawMessage) *Respon
 	return s.textResult(id, formatPathMarkdown(args.SourceID, args.TargetID, pathResults))
 }
 
-func (s *Server) handleSearchNodesTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleSearchNodesTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		Query string `json:"query"`
 	}](raw)
@@ -333,7 +333,7 @@ func (s *Server) handleSearchNodesTool(id interface{}, raw json.RawMessage) *Res
 	return s.textResult(id, formatNodeListMarkdown("Search Results", args.Query, nodes))
 }
 
-func (s *Server) handleExecuteCypherTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleExecuteCypherTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		Query string `json:"query"`
 	}](raw)
@@ -358,7 +358,7 @@ func (s *Server) handleExecuteCypherTool(id interface{}, raw json.RawMessage) *R
 	return s.textResult(id, formatCypherMarkdown(args.Query, data))
 }
 
-func (s *Server) handleGetChangeImpactTool(id interface{}, raw json.RawMessage) *Response {
+func (s *Server) handleGetChangeImpactTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
 	args, err := parseToolArgs[struct {
 		BaseRef          string `json:"base_ref"`
 		MaxDepth         int    `json:"max_depth"`
@@ -371,7 +371,7 @@ func (s *Server) handleGetChangeImpactTool(id interface{}, raw json.RawMessage) 
 	if len(s.impactRepos) == 0 {
 		return s.errorResult(id, fmt.Errorf("get_change_impact is unavailable because no repository roots were configured; start gokg mcp from a Go repo or workspace"))
 	}
-	report, err := impact.Analyze(context.Background(), s.graph, s.impactRepos, impact.Options{
+	report, err := impact.Analyze(ctx, s.graph, s.impactRepos, impact.Options{
 		BaseRef:          args.BaseRef,
 		MaxDepth:         args.MaxDepth,
 		MaxNodes:         args.MaxNodes,

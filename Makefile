@@ -1,4 +1,4 @@
-.PHONY: all build build-debug test clean format install install-tools lint
+.PHONY: all build build-debug test clean format install install-tools lint security
 
 BINARY_NAME ?= gokg
 GO ?= go

@@ -5,10 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hungpdn/gokg/internal/graph"
+	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/parser"
 
 	"github.com/stretchr/testify/assert"
@@ -369,6 +373,47 @@ func TestHandleCallChangeImpactRequiresRepoRoots(t *testing.T) {
 	assert.Contains(t, res.Error.Message, "no repository roots were configured")
 }
 
+func TestHandleCallChangeImpactMarkdown(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required for impact MCP tests")
+	}
+
+	ctx := context.Background()
+	repoDir := t.TempDir()
+	appPath := filepath.Join(repoDir, "app.go")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module example.com/impact\n\ngo 1.25\n"), 0o644))
+	require.NoError(t, os.WriteFile(appPath, []byte("package impact\n\nfunc Changed() int {\n\treturn 1\n}\n\nfunc Caller() int {\n\treturn Changed()\n}\n\nfunc Second() int {\n\treturn Caller()\n}\n"), 0o644))
+	runMCPGit(t, repoDir, "init")
+	runMCPGit(t, repoDir, "config", "user.email", "test@example.com")
+	runMCPGit(t, repoDir, "config", "user.name", "Test User")
+	runMCPGit(t, repoDir, "add", ".")
+	runMCPGit(t, repoDir, "commit", "-m", "initial")
+	require.NoError(t, os.WriteFile(appPath, []byte("package impact\n\nfunc Changed() int {\n\treturn 2\n}\n\nfunc Caller() int {\n\treturn Changed()\n}\n\nfunc Second() int {\n\treturn Caller()\n}\n"), 0o644))
+
+	g := graph.NewGraph(nil)
+	requireAddNode(t, g, ctx, &parser.Node{ID: "example.com/impact.Changed", Type: parser.NodeTypeFunc, Name: "Changed", PkgPath: "example.com/impact", FilePath: appPath, Lines: [2]int{3, 5}, RepoID: "example.com/impact"})
+	requireAddNode(t, g, ctx, &parser.Node{ID: "example.com/impact.Caller", Type: parser.NodeTypeFunc, Name: "Caller", PkgPath: "example.com/impact", FilePath: appPath, Lines: [2]int{7, 9}, RepoID: "example.com/impact"})
+	requireAddNode(t, g, ctx, &parser.Node{ID: "example.com/impact.Second", Type: parser.NodeTypeFunc, Name: "Second", PkgPath: "example.com/impact", FilePath: appPath, Lines: [2]int{11, 13}, RepoID: "example.com/impact"})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "example.com/impact.Caller", To: "example.com/impact.Changed", Type: parser.EdgeTypeCalls, RepoID: "example.com/impact"})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "example.com/impact.Second", To: "example.com/impact.Caller", Type: parser.EdgeTypeCalls, RepoID: "example.com/impact"})
+
+	server := NewServer(g, WithImpactRepos([]impact.Repo{{ID: "example.com/impact", Root: repoDir}}))
+	paramsRaw := []byte(`{"name": "get_change_impact", "arguments": {"base_ref": "HEAD", "max_depth": 2, "max_nodes": 10}}`)
+	req := &Request{JSONRPC: "2.0", ID: 13, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequestContext(ctx, req)
+	require.NotNil(t, res)
+	require.Nil(t, res.Error)
+
+	resultMap := res.Result.(map[string]interface{})
+	content := resultMap["content"].([]map[string]interface{})
+	text := content[0]["text"].(string)
+	assert.Contains(t, text, "## Change Impact")
+	assert.Contains(t, text, "Changed")
+	assert.Contains(t, text, "Caller")
+	assert.Contains(t, text, "Second")
+}
+
 func TestHandleCallRepositoryStructureMarkdown(t *testing.T) {
 	g := graph.NewGraph(nil)
 	ctx := context.Background()
@@ -400,6 +445,14 @@ func TestHandleCallRepositoryStructureMarkdown(t *testing.T) {
 	assert.Contains(t, text, "`internal/`")
 	assert.Contains(t, text, "example.com/repo/internal")
 	assert.Contains(t, text, "`main.go`")
+}
+
+func runMCPGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
 
 func TestHandleCallRepositoryStructureRejectsUnsafeLimits(t *testing.T) {

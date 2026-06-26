@@ -105,6 +105,30 @@ func TestNodesForFileRangesAndBlastRadiusDepth(t *testing.T) {
 	assert.Equal(t, 2, depthTwo[1].Distance)
 }
 
+func TestNodesForFileRangesMatchesLegacyBlankRepoID(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	filePath := filepath.Join(t.TempDir(), "legacy.go")
+
+	for _, node := range []*parser.Node{
+		{ID: "legacy.Match", Type: parser.NodeTypeFunc, Name: "Match", FilePath: filePath, Lines: [2]int{1, 5}},
+		{ID: "other.Skip", Type: parser.NodeTypeFunc, Name: "Skip", FilePath: filePath, Lines: [2]int{1, 5}, RepoID: "repo-b"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	matched, err := g.Query().NodesForFileRanges([]FileRange{{
+		FilePath:  filePath,
+		StartLine: 3,
+		EndLine:   3,
+		RepoID:    "repo-a",
+	}})
+	require.NoError(t, err)
+	require.Len(t, matched, 1)
+	assert.Equal(t, "legacy.Match", matched[0].ID)
+}
+
 func TestDependenciesAndBlastRadiusUseSemanticDependencyEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

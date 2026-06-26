@@ -104,7 +104,7 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := s.handleRequest(&req)
+	res := s.handleRequestContext(r.Context(), &req)
 	if res == nil {
 		if req.ID == nil {
 			w.WriteHeader(http.StatusAccepted)

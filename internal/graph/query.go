@@ -61,15 +61,15 @@ func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, 
 
 	results := make([]*parser.Node, 0)
 	seen := make(map[string]bool)
-	cleaned := make([]FileRange, 0, len(ranges))
+	rangesByPath := make(map[string][]FileRange)
 	for _, r := range ranges {
 		if r.FilePath == "" {
 			continue
 		}
 		r.FilePath = comparableFilePath(r.FilePath)
-		cleaned = append(cleaned, r)
+		rangesByPath[r.FilePath] = append(rangesByPath[r.FilePath], r)
 	}
-	if len(cleaned) == 0 {
+	if len(rangesByPath) == 0 {
 		return nil, nil
 	}
 
@@ -80,11 +80,9 @@ func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, 
 		if seen[node.ID] {
 			continue
 		}
-		for _, r := range cleaned {
-			if r.RepoID != "" && node.RepoID != r.RepoID {
-				continue
-			}
-			if comparableFilePath(node.FilePath) != r.FilePath {
+		nodePath := comparableFilePath(node.FilePath)
+		for _, r := range rangesByPath[nodePath] {
+			if !fileRangeMatchesNodeRepo(r, node) {
 				continue
 			}
 			if !r.WholeFile && !nodeOverlapsFileRange(node, r) {
@@ -97,6 +95,10 @@ func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, 
 	}
 	sortNodesByID(results)
 	return results, nil
+}
+
+func fileRangeMatchesNodeRepo(r FileRange, node *parser.Node) bool {
+	return r.RepoID == "" || node.RepoID == "" || node.RepoID == r.RepoID
 }
 
 func comparableFilePath(path string) string {
