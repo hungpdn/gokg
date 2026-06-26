@@ -48,8 +48,8 @@ Use this checklist for tagged GoKG releases.
 Use semantic version tags. Alpha releases should include an alpha suffix.
 
 ```bash
-git tag v0.1.0-alpha.3
-git push origin v0.1.0-alpha.3
+git tag v0.1.0-alpha.4
+git push origin v0.1.0-alpha.4
 ```
 
 ## Verify
@@ -67,7 +67,14 @@ After the GitHub Actions release workflow finishes:
 4. Confirm the Homebrew tap was updated with `Casks/gokg.rb`.
 5. Confirm the Scoop bucket was updated with `gokg.json`.
 6. Download one archive, run `gokg version`, and confirm the version matches the tag.
-7. Test package manager installs:
+7. Test the Go install path:
+
+   ```bash
+   go install github.com/hungpdn/gokg/cmd/gokg@v0.1.0-alpha.4
+   gokg version
+   ```
+
+8. Test package manager installs:
 
    ```bash
    brew tap hungpdn/tap
@@ -81,4 +88,4 @@ After the GitHub Actions release workflow finishes:
    gokg version
    ```
 
-8. Update `CHANGELOG.md` for the next development cycle.
+9. Update `CHANGELOG.md` for the next development cycle.
