@@ -46,6 +46,32 @@ deleted file mode 100644
 	assert.Equal(t, filepath.Clean("/repo/deleted.go"), files[1].AbsolutePath)
 }
 
+func TestParseDiffTreatsNoHunkChangesAsWholeFile(t *testing.T) {
+	repo := Repo{ID: "repo-a", Root: "/repo"}
+	diff := `diff --git a/app.go b/app.go
+old mode 100644
+new mode 100755
+diff --git a/old.go b/new.go
+similarity index 100%
+rename from old.go
+rename to new.go
+`
+
+	files, err := ParseDiff(repo, diff)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	assert.Equal(t, "app.go", files[0].Path)
+	assert.Equal(t, "M", files[0].Status)
+	assert.True(t, files[0].WholeFile)
+	assert.Empty(t, files[0].Ranges)
+
+	assert.Equal(t, "new.go", files[1].Path)
+	assert.Equal(t, "R", files[1].Status)
+	assert.True(t, files[1].WholeFile)
+	assert.Empty(t, files[1].Ranges)
+}
+
 func TestAnalyzeMapsChangesAndBlastRadiusDepth(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

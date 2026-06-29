@@ -105,18 +105,6 @@ var mcpCmd = &cobra.Command{
 			return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 		}
 
-		analysisRoot, err := resolveGoAnalysisRoot(".")
-		if err != nil {
-			return err
-		}
-		// Detect module automatically if not provided.
-		if modulePrefix == "" {
-			modulePrefix = analysisRoot.ModulePrefix
-			if modulePrefix == "" {
-				modulePrefix = "gokg"
-			}
-		}
-
 		// Init Storage
 		store, err := storage.NewBadgerStorage(dbPath)
 		if err != nil {
@@ -134,6 +122,21 @@ var mcpCmd = &cobra.Command{
 			return err
 		}
 		g.SetStore(nil)
+
+		analysisRoot, impactRepo, err := resolveSingleGraphImpactRepo(g, ".", modulePrefix)
+		if err != nil {
+			return err
+		}
+		// Detect module automatically if not provided.
+		if modulePrefix == "" {
+			modulePrefix = analysisRoot.ModulePrefix
+			if modulePrefix == "" {
+				modulePrefix = impactRepo.ID
+			}
+			if modulePrefix == "" {
+				modulePrefix = "gokg"
+			}
+		}
 
 		if enableWatch {
 			p := parser.NewParser(modulePrefix, modulePrefix)
@@ -164,7 +167,7 @@ var mcpCmd = &cobra.Command{
 			}
 		}
 
-		server := mcp.NewServer(g, mcp.WithImpactRepos([]impact.Repo{{ID: modulePrefix, Root: analysisRoot.Dir}}))
+		server := mcp.NewServer(g, mcp.WithImpactRepos([]impact.Repo{impactRepo}))
 		return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 	},
 }

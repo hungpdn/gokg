@@ -36,3 +36,25 @@ func TestFormatMarkdownGroupsImpactByDistanceRepoPackageAndFile(t *testing.T) {
 	assert.Contains(t, markdown, "File `/repo/app.go`:")
 	assert.True(t, strings.Index(markdown, "Distance 1:") < strings.Index(markdown, "Distance 2:"))
 }
+
+func TestFormatMarkdownEscapesInlineValues(t *testing.T) {
+	report := &Report{
+		BaseRef: "feature`branch",
+		ChangedFiles: []ChangedFile{
+			{RepoID: "repo\none", Path: "path`with`tick.go", Status: "M", WholeFile: true},
+		},
+		ChangedNodes: []NodeSummary{
+			{ID: "pkg.`Node`", Name: "Name`Tick", Type: "FUNC", PkgPath: "pkg\npath"},
+		},
+		Warnings: []string{"warning\nnext"},
+	}
+
+	markdown := FormatMarkdown(report)
+
+	assert.Contains(t, markdown, "``feature`branch``")
+	assert.Contains(t, markdown, "``path`with`tick.go``")
+	assert.Contains(t, markdown, "repo one")
+	assert.Contains(t, markdown, "``Name`Tick``")
+	assert.Contains(t, markdown, "warning next")
+	assert.NotContains(t, markdown, "warning\nnext")
+}

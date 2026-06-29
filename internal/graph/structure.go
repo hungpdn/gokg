@@ -34,6 +34,48 @@ type RepositoryStructureNode struct {
 	Children []*RepositoryStructureNode `json:"children,omitempty"`
 }
 
+// RepositoryRoot describes a repository root discovered from graph metadata.
+type RepositoryRoot struct {
+	RepoID string
+	Root   string
+}
+
+// RepositoryRoots returns repository roots recorded in the graph's folder
+// structure snapshot. A normal single-repo graph has one root folder node; a
+// workspace graph has one root folder node per repository.
+func (qb *QueryBuilder) RepositoryRoots() []RepositoryRoot {
+	qb.g.mu.RLock()
+	defer qb.g.mu.RUnlock()
+
+	rootsByRepo := make(map[string]string)
+	for _, node := range qb.g.nodes {
+		if node == nil || node.Type != parser.NodeTypeFolder || node.FilePath == "" {
+			continue
+		}
+		if !isRepositoryRootFolderID(node.ID) {
+			continue
+		}
+
+		root := cleanAbsPath(node.FilePath)
+		if existing, ok := rootsByRepo[node.RepoID]; ok && existing <= root {
+			continue
+		}
+		rootsByRepo[node.RepoID] = root
+	}
+
+	roots := make([]RepositoryRoot, 0, len(rootsByRepo))
+	for repoID, root := range rootsByRepo {
+		roots = append(roots, RepositoryRoot{RepoID: repoID, Root: root})
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		if roots[i].RepoID != roots[j].RepoID {
+			return roots[i].RepoID < roots[j].RepoID
+		}
+		return roots[i].Root < roots[j].Root
+	})
+	return roots
+}
+
 // PackageFoldersForRoot returns known package locations keyed by repository
 // relative directory. It uses the graph's current FILE nodes, so callers should
 // refresh packages before refreshing repository structure.
@@ -454,6 +496,10 @@ func graphFolderNodeID(rel string) string {
 		return "folder:."
 	}
 	return parser.BuildID("folder:", rel)
+}
+
+func isRepositoryRootFolderID(id string) bool {
+	return id == "folder:." || strings.HasSuffix(id, ":folder:.")
 }
 
 func isGraphPathInsideRoot(rel string) bool {

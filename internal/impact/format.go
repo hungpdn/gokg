@@ -14,7 +14,7 @@ func FormatMarkdown(report *Report) string {
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "- Base ref: `%s`\n", report.BaseRef)
+	fmt.Fprintf(&b, "- Base ref: %s\n", markdownInlineCode(report.BaseRef))
 	fmt.Fprintf(&b, "- Repositories scanned: **%d**\n", scannedRepoCount(report))
 	fmt.Fprintf(&b, "- Changed files: **%d**\n", len(report.ChangedFiles))
 	fmt.Fprintf(&b, "- Changed nodes: **%d**\n", len(report.ChangedNodes))
@@ -29,11 +29,11 @@ func FormatMarkdown(report *Report) string {
 
 	b.WriteString("\n### Changed Files\n\n")
 	for _, file := range report.ChangedFiles {
-		fmt.Fprintf(&b, "- `%s`", file.Path)
+		fmt.Fprintf(&b, "- %s", markdownInlineCode(file.Path))
 		if file.RepoID != "" {
-			fmt.Fprintf(&b, " repo `%s`", file.RepoID)
+			fmt.Fprintf(&b, " repo %s", markdownInlineCode(file.RepoID))
 		}
-		fmt.Fprintf(&b, " status `%s`", file.Status)
+		fmt.Fprintf(&b, " status %s", markdownInlineCode(file.Status))
 		if file.WholeFile {
 			b.WriteString(" whole file")
 		} else if len(file.Ranges) > 0 {
@@ -105,20 +105,20 @@ func writeGroupedNodeSummaries(b *strings.Builder, nodes []NodeSummary) {
 			currentPkg = ""
 			currentFile = ""
 			if currentRepo != "" {
-				fmt.Fprintf(b, "\nRepo `%s`:\n", currentRepo)
+				fmt.Fprintf(b, "\nRepo %s:\n", markdownInlineCode(currentRepo))
 			}
 		}
 		if node.PkgPath != currentPkg {
 			currentPkg = node.PkgPath
 			currentFile = ""
 			if currentPkg != "" {
-				fmt.Fprintf(b, "\nPackage `%s`:\n", currentPkg)
+				fmt.Fprintf(b, "\nPackage %s:\n", markdownInlineCode(currentPkg))
 			}
 		}
 		if node.FilePath != currentFile {
 			currentFile = node.FilePath
 			if currentFile != "" {
-				fmt.Fprintf(b, "\nFile `%s`:\n", currentFile)
+				fmt.Fprintf(b, "\nFile %s:\n", markdownInlineCode(currentFile))
 			}
 		}
 		writeNodeSummaryLine(b, node)
@@ -143,11 +143,11 @@ func sortedNodeSummaries(nodes []NodeSummary) []NodeSummary {
 }
 
 func writeNodeSummaryLine(b *strings.Builder, node NodeSummary) {
-	fmt.Fprintf(b, "- **`%s`** (`%s`) ID: `%s`", node.Name, node.Type, node.ID)
+	fmt.Fprintf(b, "- **%s** (%s) ID: %s", markdownInlineCode(node.Name), markdownInlineCode(node.Type), markdownInlineCode(node.ID))
 	if node.FilePath != "" && node.LineStart > 0 && node.LineEnd >= node.LineStart {
-		fmt.Fprintf(b, " `%s` L%d-%d", node.FilePath, node.LineStart, node.LineEnd)
+		fmt.Fprintf(b, " %s L%d-%d", markdownInlineCode(node.FilePath), node.LineStart, node.LineEnd)
 	} else if node.PkgPath != "" {
-		fmt.Fprintf(b, " pkg `%s`", node.PkgPath)
+		fmt.Fprintf(b, " pkg %s", markdownInlineCode(node.PkgPath))
 	}
 	b.WriteByte('\n')
 }
@@ -158,6 +158,39 @@ func writeWarnings(b *strings.Builder, warnings []string) {
 	}
 	b.WriteString("\n### Warnings\n\n")
 	for _, warning := range warnings {
-		fmt.Fprintf(b, "- %s\n", warning)
+		fmt.Fprintf(b, "- %s\n", markdownText(warning))
 	}
+}
+
+func markdownInlineCode(value string) string {
+	value = markdownText(value)
+	fence := strings.Repeat("`", maxBacktickRun(value)+1)
+	if value == "" {
+		return fence + " " + fence
+	}
+	if strings.HasPrefix(value, "`") || strings.HasSuffix(value, "`") ||
+		strings.HasPrefix(value, " ") || strings.HasSuffix(value, " ") {
+		return fence + " " + value + " " + fence
+	}
+	return fence + value + fence
+}
+
+func markdownText(value string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(value)
+}
+
+func maxBacktickRun(value string) int {
+	maxRun := 0
+	currentRun := 0
+	for _, r := range value {
+		if r == '`' {
+			currentRun++
+			if currentRun > maxRun {
+				maxRun = currentRun
+			}
+			continue
+		}
+		currentRun = 0
+	}
+	return maxRun
 }

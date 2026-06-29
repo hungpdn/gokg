@@ -166,7 +166,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		return nil, err
 	}
 	report.ChangedNodes = summarizeNodes(changedNodes)
-	report.addUnmatchedFileWarnings(g)
+	report.addUnmatchedFileWarnings(changedNodes)
 
 	changedNodeIDs := make([]string, 0, len(changedNodes))
 	for _, node := range changedNodes {
@@ -287,6 +287,9 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 		if current.Status == "" {
 			current.Status = "M"
 		}
+		if len(current.Ranges) == 0 && !current.WholeFile {
+			current.WholeFile = true
+		}
 		current.AbsolutePath = cleanRepoFile(repo.Root, current.Path)
 		files = append(files, *current)
 		current = nil
@@ -404,10 +407,10 @@ func graphRangesForChangedFile(changed ChangedFile) []graph.FileRange {
 	return ranges
 }
 
-func (r *Report) addUnmatchedFileWarnings(g *graph.Graph) {
+func (r *Report) addUnmatchedFileWarnings(changedNodes []*parser.Node) {
+	nodesByPath := nodesByComparablePath(changedNodes)
 	for _, changed := range r.ChangedFiles {
-		nodes, err := g.Query().NodesForFileRanges(graphRangesForChangedFile(changed))
-		if err != nil || len(nodes) > 0 {
+		if changedFileHasMatchingNode(changed, nodesByPath[comparableImpactPath(changed.AbsolutePath)]) {
 			continue
 		}
 		r.Warnings = append(r.Warnings, fmt.Sprintf(
@@ -415,6 +418,81 @@ func (r *Report) addUnmatchedFileWarnings(g *graph.Graph) {
 			changed.AbsolutePath,
 		))
 	}
+}
+
+func nodesByComparablePath(nodes []*parser.Node) map[string][]*parser.Node {
+	nodesByPath := make(map[string][]*parser.Node)
+	for _, node := range nodes {
+		if node == nil || node.FilePath == "" {
+			continue
+		}
+		path := comparableImpactPath(node.FilePath)
+		nodesByPath[path] = append(nodesByPath[path], node)
+	}
+	return nodesByPath
+}
+
+func changedFileHasMatchingNode(changed ChangedFile, nodes []*parser.Node) bool {
+	for _, node := range nodes {
+		if changedFileMatchesNode(changed, node) {
+			return true
+		}
+	}
+	return false
+}
+
+func changedFileMatchesNode(changed ChangedFile, node *parser.Node) bool {
+	if node == nil || node.FilePath == "" {
+		return false
+	}
+	if changed.RepoID != "" && node.RepoID != "" && changed.RepoID != node.RepoID {
+		return false
+	}
+	if comparableImpactPath(changed.AbsolutePath) != comparableImpactPath(node.FilePath) {
+		return false
+	}
+	if changed.WholeFile {
+		return true
+	}
+	for _, r := range changed.Ranges {
+		if lineRangeOverlapsNode(r, node) {
+			return true
+		}
+	}
+	return false
+}
+
+func lineRangeOverlapsNode(r LineRange, node *parser.Node) bool {
+	if node == nil || node.Lines[0] <= 0 || node.Lines[1] <= 0 || node.Lines[1] < node.Lines[0] {
+		return false
+	}
+	start := r.Start
+	end := r.End
+	if start <= 0 || end <= 0 {
+		return false
+	}
+	if end < start {
+		start, end = end, start
+	}
+	return node.Lines[0] <= end && node.Lines[1] >= start
+}
+
+func comparableImpactPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	cleaned := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent := filepath.Dir(cleaned)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(resolvedParent, filepath.Base(cleaned))
+	}
+	return cleaned
 }
 
 func summarizeNodes(nodes []*parser.Node) []NodeSummary {

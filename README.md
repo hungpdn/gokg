@@ -186,11 +186,14 @@ gokg export --workspace my-platform --format json --out workspace-graph.json
 ### 6. Analyze Change Impact
 
 ```bash
-# Default: tracked staged + unstaged changes against HEAD
+# Default: tracked staged + unstaged + untracked changes against HEAD
 gokg impact
 
-# Include untracked files and inspect second-hop dependents
-gokg impact --include-untracked --depth 2
+# Inspect second-hop dependents
+gokg impact --depth 2
+
+# Only tracked staged + unstaged files
+gokg impact --tracked-only
 
 # Machine-readable report
 gokg impact --json

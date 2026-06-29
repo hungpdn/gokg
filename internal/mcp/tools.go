@@ -153,7 +153,7 @@ func (s *Server) toolDefinitions() []toolDefinition {
 				},
 				"include_untracked": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Include untracked Git files. Defaults to false.",
+					"description": "Include untracked Git files. Defaults to true.",
 				},
 			}),
 			handler: (*Server).handleGetChangeImpactTool,
@@ -363,7 +363,7 @@ func (s *Server) handleGetChangeImpactTool(ctx context.Context, id interface{}, 
 		BaseRef          string `json:"base_ref"`
 		MaxDepth         int    `json:"max_depth"`
 		MaxNodes         int    `json:"max_nodes"`
-		IncludeUntracked bool   `json:"include_untracked"`
+		IncludeUntracked *bool  `json:"include_untracked"`
 	}](raw)
 	if err != nil {
 		return s.errorResult(id, err)
@@ -371,11 +371,15 @@ func (s *Server) handleGetChangeImpactTool(ctx context.Context, id interface{}, 
 	if len(s.impactRepos) == 0 {
 		return s.errorResult(id, fmt.Errorf("get_change_impact is unavailable because no repository roots were configured; start gokg mcp from a Go repo or workspace"))
 	}
+	includeUntracked := true
+	if args.IncludeUntracked != nil {
+		includeUntracked = *args.IncludeUntracked
+	}
 	report, err := impact.Analyze(ctx, s.graph, s.impactRepos, impact.Options{
 		BaseRef:          args.BaseRef,
 		MaxDepth:         args.MaxDepth,
 		MaxNodes:         args.MaxNodes,
-		IncludeUntracked: args.IncludeUntracked,
+		IncludeUntracked: includeUntracked,
 	})
 	if err != nil {
 		return s.errorResult(id, err)

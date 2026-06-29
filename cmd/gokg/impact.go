@@ -26,7 +26,8 @@ func newImpactCommand() *cobra.Command {
 	cmd.Flags().String("base", impact.DefaultBaseRef, "Git base ref for diff analysis")
 	cmd.Flags().Int("depth", impact.DefaultMaxDepth, "Maximum inbound dependency depth")
 	cmd.Flags().Int("max-nodes", impact.DefaultMaxNodes, "Maximum impacted nodes to return")
-	cmd.Flags().Bool("include-untracked", false, "Include untracked Git files")
+	cmd.Flags().Bool("include-untracked", true, "Include untracked Git files")
+	cmd.Flags().Bool("tracked-only", false, "Analyze only tracked Git changes")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 	return cmd
 }
@@ -39,7 +40,14 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 	maxDepth, _ := cmd.Flags().GetInt("depth")
 	maxNodes, _ := cmd.Flags().GetInt("max-nodes")
 	includeUntracked, _ := cmd.Flags().GetBool("include-untracked")
+	trackedOnly, _ := cmd.Flags().GetBool("tracked-only")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
+	if trackedOnly {
+		if cmd.Flags().Changed("include-untracked") && includeUntracked {
+			return fmt.Errorf("--tracked-only cannot be used with --include-untracked=true")
+		}
+		includeUntracked = false
+	}
 
 	opts := impact.NormalizeOptions(impact.Options{
 		BaseRef:          baseRef,
@@ -98,15 +106,6 @@ func loadImpactGraph(ctx context.Context, cmd *cobra.Command, dbPath string, wor
 		return g, repos, nil
 	}
 
-	analysisRoot, err := resolveGoAnalysisRoot(".")
-	if err != nil {
-		return nil, nil, err
-	}
-	repoID := analysisRoot.ModulePrefix
-	if repoID == "" {
-		repoID = "gokg"
-	}
-
 	store, err := storage.NewBadgerStorageReadOnly(dbPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open storage: %w", err)
@@ -121,5 +120,9 @@ func loadImpactGraph(ctx context.Context, cmd *cobra.Command, dbPath string, wor
 	if err := g.LoadFromStorage(ctx); err != nil {
 		return nil, nil, fmt.Errorf("failed to load graph: %w", err)
 	}
-	return g, []impact.Repo{{ID: repoID, Root: analysisRoot.Dir}}, nil
+	_, repo, err := resolveSingleGraphImpactRepo(g, ".", "")
+	if err != nil {
+		return nil, nil, err
+	}
+	return g, []impact.Repo{repo}, nil
 }

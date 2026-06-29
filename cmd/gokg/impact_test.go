@@ -54,6 +54,55 @@ func TestImpactJSONWritesMachineReadableStdout(t *testing.T) {
 	assert.Contains(t, stderr.String(), "Loading graph")
 }
 
+func TestImpactIncludesUntrackedByDefaultAndTrackedOnlyCanDisable(t *testing.T) {
+	repoDir, dbDir := newImpactGitRepoAndDB(t, true)
+	withWorkingDir(t, repoDir)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "new.go"), []byte("package impact\n\nfunc NewFile() {}\n"), 0o644))
+
+	var defaultOut bytes.Buffer
+	defaultCmd := newImpactCommand()
+	defaultCmd.SetOut(&defaultOut)
+	defaultCmd.SetErr(&bytes.Buffer{})
+	defaultCmd.SetArgs([]string{"--db", dbDir, "--json"})
+	require.NoError(t, defaultCmd.Execute())
+	assert.Contains(t, defaultOut.String(), `"path": "new.go"`)
+	assert.Contains(t, defaultOut.String(), `"status": "??"`)
+
+	var trackedOnlyOut bytes.Buffer
+	trackedOnlyCmd := newImpactCommand()
+	trackedOnlyCmd.SetOut(&trackedOnlyOut)
+	trackedOnlyCmd.SetErr(&bytes.Buffer{})
+	trackedOnlyCmd.SetArgs([]string{"--db", dbDir, "--json", "--tracked-only"})
+	require.NoError(t, trackedOnlyCmd.Execute())
+	assert.NotContains(t, trackedOnlyOut.String(), `"path": "new.go"`)
+}
+
+func TestImpactTrackedOnlyRejectsExplicitIncludeUntracked(t *testing.T) {
+	cmd := newImpactCommand()
+	cmd.SetArgs([]string{"--tracked-only", "--include-untracked"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--tracked-only cannot be used with --include-untracked=true")
+}
+
+func TestImpactUsesGraphRootForCustomDB(t *testing.T) {
+	_, dbDir := newImpactGitRepoAndDB(t, true)
+	withWorkingDir(t, t.TempDir())
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newImpactCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--db", dbDir, "--json"})
+
+	require.NoError(t, cmd.Execute())
+	assert.True(t, json.Valid(stdout.Bytes()))
+	assert.Contains(t, stdout.String(), `"example.com/impact.Changed"`)
+	assert.NotContains(t, stderr.String(), "failed")
+}
+
 func TestImpactEmptyDiffSucceeds(t *testing.T) {
 	repoDir, dbDir := newImpactGitRepoAndDB(t, false)
 	withWorkingDir(t, repoDir)
@@ -100,6 +149,7 @@ func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
 	g := graph.NewGraph(store)
 	require.NoError(t, g.BuildFromParseResult(context.Background(), &parser.ParseResult{
 		Nodes: []*parser.Node{
+			{ID: "folder:.", Type: parser.NodeTypeFolder, Name: filepath.Base(repoDir), FilePath: repoDir, RepoID: "example.com/impact"},
 			{ID: "example.com/impact.Changed", Type: parser.NodeTypeFunc, Name: "Changed", PkgPath: "example.com/impact", FilePath: appPath, Lines: [2]int{3, 5}, RepoID: "example.com/impact"},
 			{ID: "example.com/impact.Caller", Type: parser.NodeTypeFunc, Name: "Caller", PkgPath: "example.com/impact", FilePath: appPath, Lines: [2]int{7, 9}, RepoID: "example.com/impact"},
 		},

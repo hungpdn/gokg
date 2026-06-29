@@ -129,6 +129,27 @@ func TestNodesForFileRangesMatchesLegacyBlankRepoID(t *testing.T) {
 	assert.Equal(t, "legacy.Match", matched[0].ID)
 }
 
+func TestRepositoryRootsReturnsSingleAndWorkspaceRoots(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	rootA := filepath.Join(t.TempDir(), "service-a")
+	rootB := filepath.Join(t.TempDir(), "service-b")
+
+	for _, node := range []*parser.Node{
+		{ID: "repo:service-a:folder:.", Type: parser.NodeTypeFolder, Name: "service-a", FilePath: rootA, RepoID: "service-a"},
+		{ID: "repo:service-b:folder:.", Type: parser.NodeTypeFolder, Name: "service-b", FilePath: rootB, RepoID: "service-b"},
+		{ID: "repo:service-a:folder:internal", Type: parser.NodeTypeFolder, Name: "internal", FilePath: filepath.Join(rootA, "internal"), RepoID: "service-a"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	roots := g.Query().RepositoryRoots()
+	require.Len(t, roots, 2)
+	assert.Equal(t, RepositoryRoot{RepoID: "service-a", Root: filepath.Clean(rootA)}, roots[0])
+	assert.Equal(t, RepositoryRoot{RepoID: "service-b", Root: filepath.Clean(rootB)}, roots[1])
+}
+
 func TestDependenciesAndBlastRadiusUseSemanticDependencyEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)
