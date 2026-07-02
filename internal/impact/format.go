@@ -2,7 +2,7 @@ package impact
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -127,17 +127,17 @@ func writeGroupedNodeSummaries(b *strings.Builder, nodes []NodeSummary) {
 
 func sortedNodeSummaries(nodes []NodeSummary) []NodeSummary {
 	sorted := append([]NodeSummary(nil), nodes...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].RepoID != sorted[j].RepoID {
-			return sorted[i].RepoID < sorted[j].RepoID
+	slices.SortFunc(sorted, func(a, b NodeSummary) int {
+		if a.RepoID != b.RepoID {
+			return strings.Compare(a.RepoID, b.RepoID)
 		}
-		if sorted[i].PkgPath != sorted[j].PkgPath {
-			return sorted[i].PkgPath < sorted[j].PkgPath
+		if a.PkgPath != b.PkgPath {
+			return strings.Compare(a.PkgPath, b.PkgPath)
 		}
-		if sorted[i].FilePath != sorted[j].FilePath {
-			return sorted[i].FilePath < sorted[j].FilePath
+		if a.FilePath != b.FilePath {
+			return strings.Compare(a.FilePath, b.FilePath)
 		}
-		return sorted[i].ID < sorted[j].ID
+		return strings.Compare(a.ID, b.ID)
 	})
 	return sorted
 }

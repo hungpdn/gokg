@@ -31,7 +31,7 @@ deleted file mode 100644
 -old
 `
 
-	files, err := ParseDiff(repo, diff)
+	files, err := ParseDiff(repo, strings.NewReader(diff))
 	require.NoError(t, err)
 	require.Len(t, files, 2)
 
@@ -57,7 +57,7 @@ rename from old.go
 rename to new.go
 `
 
-	files, err := ParseDiff(repo, diff)
+	files, err := ParseDiff(repo, strings.NewReader(diff))
 	require.NoError(t, err)
 	require.Len(t, files, 2)
 

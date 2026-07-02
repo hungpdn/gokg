@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
@@ -148,41 +148,44 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		return nil, fmt.Errorf("at least one repository root is required")
 	}
 
-	var mu sync.Mutex
 	eg, ctxGroup := errgroup.WithContext(ctx)
 
-	for _, repo := range repos {
-		repo := repo // capture for goroutine
+	repoReports := make([]RepoReport, len(repos))
+	repoFiles := make([][]ChangedFile, len(repos))
+	repoWarnings := make([][]string, len(repos))
+
+	for i, repo := range repos {
+		i, repo := i, repo // capture for goroutine
 		eg.Go(func() error {
 			repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
 			files, err := changedFilesForRepo(ctxGroup, runner, repo, opts)
-			
-			mu.Lock()
-			defer mu.Unlock()
-			
+
 			if err != nil {
 				repoReport.Error = err.Error()
-				report.Warnings = append(report.Warnings, fmt.Sprintf("repo %q: %v", repo.ID, err))
-				report.Repos = append(report.Repos, repoReport)
+				repoWarnings[i] = []string{fmt.Sprintf("repo %q: %v", repo.ID, err)}
+				repoReports[i] = repoReport
 				return nil
 			}
-			
+
 			repoReport.Scanned = true
-			report.Repos = append(report.Repos, repoReport)
-			report.ChangedFiles = append(report.ChangedFiles, files...)
+			repoReports[i] = repoReport
+			repoFiles[i] = files
 			return nil
 		})
 	}
-	
+
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
 	successes := 0
-	for _, r := range report.Repos {
-		if r.Scanned {
+	for i := range repos {
+		report.Repos = append(report.Repos, repoReports[i])
+		if repoReports[i].Scanned {
 			successes++
+			report.ChangedFiles = append(report.ChangedFiles, repoFiles[i]...)
 		}
+		report.Warnings = append(report.Warnings, repoWarnings[i]...)
 	}
 
 	if successes == 0 {
@@ -204,7 +207,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		return nil, err
 	}
 	report.ChangedNodes = summarizeNodes(changedNodes)
-	
+
 	pathCache := make(map[string]string)
 	report.addUnmatchedFileWarnings(changedNodes, pathCache)
 
@@ -224,7 +227,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 	if truncated {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("impacted nodes truncated at max_nodes=%d", opts.MaxNodes))
 	}
-	sort.Strings(report.Warnings)
+	slices.Sort(report.Warnings)
 	return report, nil
 }
 
@@ -289,8 +292,8 @@ func normalizeRepos(repos []Repo) []Repo {
 		}
 		normalized = append(normalized, repo)
 	}
-	sort.Slice(normalized, func(i, j int) bool {
-		return normalized[i].ID < normalized[j].ID
+	slices.SortFunc(normalized, func(a, b Repo) int {
+		return strings.Compare(a.ID, b.ID)
 	})
 	return normalized
 }
@@ -302,7 +305,7 @@ func changedFilesForRepo(ctx context.Context, runner CommandRunner, repo Repo, o
 		return nil, err
 	}
 
-	files, err := ParseDiff(repo, string(diffOutput))
+	files, err := ParseDiff(repo, bytes.NewReader(diffOutput))
 	if err != nil {
 		return nil, err
 	}
@@ -311,17 +314,14 @@ func changedFilesForRepo(ctx context.Context, runner CommandRunner, repo Repo, o
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, ParseUntracked(repo, string(untrackedOutput))...)
+		files = append(files, ParseUntracked(repo, bytes.NewReader(untrackedOutput))...)
 	}
 	sortChangedFiles(files)
 	return files, nil
 }
 
-var diffHeaderRegexp = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
-var hunkRegexp = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
-
 // ParseDiff parses unified diff output into a list of ChangedFiles.
-func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
+func ParseDiff(repo Repo, r io.Reader) ([]ChangedFile, error) {
 	var files []ChangedFile
 	var current *ChangedFile
 
@@ -340,14 +340,19 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 		current = nil
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(diff))
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if matches := diffHeaderRegexp.FindStringSubmatch(line); matches != nil {
+		if strings.HasPrefix(line, "diff --git a/") {
 			flush()
-			path := matches[2]
-			if path == "/dev/null" {
-				path = matches[1]
+			rest := strings.TrimPrefix(line, "diff --git a/")
+			idx := strings.LastIndex(rest, " b/")
+			path := ""
+			if idx != -1 {
+				path = rest[idx+3:]
+				if path == "/dev/null" {
+					path = rest[:idx]
+				}
 			}
 			current = &ChangedFile{RepoID: repo.ID, Path: path, Status: "M"}
 			continue
@@ -371,9 +376,9 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 		case strings.HasPrefix(line, "--- a/") && current.Path == "":
 			current.Path = strings.TrimPrefix(line, "--- a/")
 		case strings.HasPrefix(line, "@@ "):
-			r, ok := parseHunkRange(line)
+			rg, ok := parseHunkRange(line)
 			if ok {
-				current.Ranges = append(current.Ranges, r)
+				current.Ranges = append(current.Ranges, rg)
 			}
 		}
 	}
@@ -385,31 +390,49 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 }
 
 func parseHunkRange(line string) (LineRange, bool) {
-	matches := hunkRegexp.FindStringSubmatch(line)
-	if matches == nil {
+	idx := strings.Index(line, " +")
+	if idx == -1 {
 		return LineRange{}, false
 	}
-	start, err := strconv.Atoi(matches[1])
+	rest := line[idx+2:]
+	endIdx := strings.Index(rest, " @@")
+	if endIdx == -1 {
+		return LineRange{}, false
+	}
+	plusPart := rest[:endIdx]
+
+	commaIdx := strings.IndexByte(plusPart, ',')
+	startStr := plusPart
+	countStr := ""
+	if commaIdx != -1 {
+		startStr = plusPart[:commaIdx]
+		countStr = plusPart[commaIdx+1:]
+	}
+
+	start, err := strconv.Atoi(startStr)
 	if err != nil {
 		return LineRange{}, false
 	}
+
 	count := 1
-	if matches[2] != "" {
-		count, err = strconv.Atoi(matches[2])
+	if countStr != "" {
+		count, err = strconv.Atoi(countStr)
 		if err != nil {
 			return LineRange{}, false
 		}
 	}
+
 	if count <= 0 {
 		return LineRange{Start: start, End: start}, true
 	}
 	return LineRange{Start: start, End: start + count - 1}, true
 }
 
-func ParseUntracked(repo Repo, output string) []ChangedFile {
+func ParseUntracked(repo Repo, r io.Reader) []ChangedFile {
 	var files []ChangedFile
-	for _, line := range strings.Split(output, "\n") {
-		path := strings.TrimSpace(line)
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		path := strings.TrimSpace(scanner.Text())
 		if path == "" {
 			continue
 		}
@@ -534,7 +557,7 @@ func comparableImpactPath(path string, pathCache map[string]string) string {
 	if cached, ok := pathCache[path]; ok {
 		return cached
 	}
-	
+
 	resolvedPath := path
 	if abs, err := filepath.Abs(resolvedPath); err == nil {
 		resolvedPath = abs
@@ -563,8 +586,8 @@ func summarizeNodes(nodes []*parser.Node) []NodeSummary {
 		}
 		summaries = append(summaries, summarizeNode(node))
 	}
-	sort.Slice(summaries, func(i, j int) bool {
-		return summaries[i].ID < summaries[j].ID
+	slices.SortFunc(summaries, func(a, b NodeSummary) int {
+		return strings.Compare(a.ID, b.ID)
 	})
 	return summaries
 }
@@ -578,11 +601,11 @@ func summarizeImpactNodes(nodes []graph.NodeDistance) []ImpactNode {
 		summary := summarizeNode(node.Node)
 		summaries = append(summaries, ImpactNode{NodeSummary: summary, Distance: node.Distance})
 	}
-	sort.Slice(summaries, func(i, j int) bool {
-		if summaries[i].Distance != summaries[j].Distance {
-			return summaries[i].Distance < summaries[j].Distance
+	slices.SortFunc(summaries, func(a, b ImpactNode) int {
+		if a.Distance != b.Distance {
+			return a.Distance - b.Distance
 		}
-		return summaries[i].ID < summaries[j].ID
+		return strings.Compare(a.ID, b.ID)
 	})
 	return summaries
 }
@@ -601,10 +624,10 @@ func summarizeNode(node *parser.Node) NodeSummary {
 }
 
 func sortChangedFiles(files []ChangedFile) {
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].RepoID != files[j].RepoID {
-			return files[i].RepoID < files[j].RepoID
+	slices.SortFunc(files, func(a, b ChangedFile) int {
+		if a.RepoID != b.RepoID {
+			return strings.Compare(a.RepoID, b.RepoID)
 		}
-		return files[i].Path < files[j].Path
+		return strings.Compare(a.Path, b.Path)
 	})
 }
