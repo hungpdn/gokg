@@ -1,6 +1,7 @@
 package impact
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -11,9 +12,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -26,6 +29,7 @@ const (
 
 var errAllReposFailed = errors.New("impact analysis failed for all repositories")
 
+// Options configures the behavior of the impact analysis.
 type Options struct {
 	BaseRef          string
 	MaxDepth         int
@@ -33,11 +37,13 @@ type Options struct {
 	IncludeUntracked bool
 }
 
+// Repo represents a Git repository within the workspace.
 type Repo struct {
 	ID   string `json:"id"`
 	Root string `json:"root"`
 }
 
+// RepoReport summarizes the analysis status of a single repository.
 type RepoReport struct {
 	ID      string `json:"id"`
 	Root    string `json:"root"`
@@ -45,11 +51,13 @@ type RepoReport struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// LineRange represents a start and end line number in a file.
 type LineRange struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
 }
 
+// ChangedFile represents a file that was modified, added, or deleted.
 type ChangedFile struct {
 	RepoID       string      `json:"repo_id,omitempty"`
 	Path         string      `json:"path"`
@@ -60,6 +68,7 @@ type ChangedFile struct {
 	Untracked    bool        `json:"untracked,omitempty"`
 }
 
+// NodeSummary provides a lightweight summary of a graph node.
 type NodeSummary struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -71,11 +80,13 @@ type NodeSummary struct {
 	RepoID    string `json:"repo_id,omitempty"`
 }
 
+// ImpactNode represents a node impacted by a change, including its distance.
 type ImpactNode struct {
 	NodeSummary
 	Distance int `json:"distance"`
 }
 
+// Report contains the complete results of an impact analysis.
 type Report struct {
 	BaseRef       string        `json:"base_ref"`
 	Repos         []RepoReport  `json:"repos"`
@@ -113,10 +124,12 @@ func (execRunner) Run(ctx context.Context, dir string, name string, args ...stri
 	return out, nil
 }
 
+// Analyze performs a change impact analysis using the default execCommand runner.
 func Analyze(ctx context.Context, g *graph.Graph, repos []Repo, opts Options) (*Report, error) {
 	return AnalyzeWithRunner(ctx, g, repos, opts, execRunner{})
 }
 
+// AnalyzeWithRunner performs a change impact analysis using a custom CommandRunner.
 func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts Options, runner CommandRunner) (*Report, error) {
 	opts = NormalizeOptions(opts)
 	if err := ValidateOptions(opts); err != nil {
@@ -135,20 +148,41 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		return nil, fmt.Errorf("at least one repository root is required")
 	}
 
-	successes := 0
+	var mu sync.Mutex
+	eg, ctxGroup := errgroup.WithContext(ctx)
+
 	for _, repo := range repos {
-		repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
-		files, err := changedFilesForRepo(ctx, runner, repo, opts)
-		if err != nil {
-			repoReport.Error = err.Error()
-			report.Warnings = append(report.Warnings, fmt.Sprintf("repo %q: %v", repo.ID, err))
+		repo := repo // capture for goroutine
+		eg.Go(func() error {
+			repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
+			files, err := changedFilesForRepo(ctxGroup, runner, repo, opts)
+			
+			mu.Lock()
+			defer mu.Unlock()
+			
+			if err != nil {
+				repoReport.Error = err.Error()
+				report.Warnings = append(report.Warnings, fmt.Sprintf("repo %q: %v", repo.ID, err))
+				report.Repos = append(report.Repos, repoReport)
+				return nil
+			}
+			
+			repoReport.Scanned = true
 			report.Repos = append(report.Repos, repoReport)
-			continue
+			report.ChangedFiles = append(report.ChangedFiles, files...)
+			return nil
+		})
+	}
+	
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	successes := 0
+	for _, r := range report.Repos {
+		if r.Scanned {
+			successes++
 		}
-		repoReport.Scanned = true
-		report.Repos = append(report.Repos, repoReport)
-		report.ChangedFiles = append(report.ChangedFiles, files...)
-		successes++
 	}
 
 	if successes == 0 {
@@ -161,12 +195,22 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		fileRanges = append(fileRanges, graphRangesForChangedFile(changed)...)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	changedNodes, err := g.Query().NodesForFileRanges(fileRanges)
 	if err != nil {
 		return nil, err
 	}
 	report.ChangedNodes = summarizeNodes(changedNodes)
-	report.addUnmatchedFileWarnings(changedNodes)
+	
+	pathCache := make(map[string]string)
+	report.addUnmatchedFileWarnings(changedNodes, pathCache)
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	changedNodeIDs := make([]string, 0, len(changedNodes))
 	for _, node := range changedNodes {
@@ -211,6 +255,8 @@ func ValidateOptions(opts Options) error {
 	return nil
 }
 
+var baseRefRegexp = regexp.MustCompile(`^[a-zA-Z0-9_/.^~-]+$`)
+
 func validateBaseRef(baseRef string) error {
 	baseRef = strings.TrimSpace(baseRef)
 	if baseRef == "" {
@@ -219,10 +265,8 @@ func validateBaseRef(baseRef string) error {
 	if strings.HasPrefix(baseRef, "-") {
 		return fmt.Errorf("base ref must not start with '-'")
 	}
-	for _, r := range baseRef {
-		if r < 0x20 || r == 0x7f {
-			return fmt.Errorf("base ref must not contain control characters")
-		}
+	if !baseRefRegexp.MatchString(baseRef) {
+		return fmt.Errorf("base ref contains invalid characters")
 	}
 	return nil
 }
@@ -276,6 +320,7 @@ func changedFilesForRepo(ctx context.Context, runner CommandRunner, repo Repo, o
 var diffHeaderRegexp = regexp.MustCompile(`^diff --git a/(.*) b/(.*)$`)
 var hunkRegexp = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 
+// ParseDiff parses unified diff output into a list of ChangedFiles.
 func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 	var files []ChangedFile
 	var current *ChangedFile
@@ -295,7 +340,9 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 		current = nil
 	}
 
-	for _, line := range strings.Split(diff, "\n") {
+	scanner := bufio.NewScanner(strings.NewReader(diff))
+	for scanner.Scan() {
+		line := scanner.Text()
 		if matches := diffHeaderRegexp.FindStringSubmatch(line); matches != nil {
 			flush()
 			path := matches[2]
@@ -329,6 +376,9 @@ func ParseDiff(repo Repo, diff string) ([]ChangedFile, error) {
 				current.Ranges = append(current.Ranges, r)
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	flush()
 	return files, nil
@@ -407,10 +457,10 @@ func graphRangesForChangedFile(changed ChangedFile) []graph.FileRange {
 	return ranges
 }
 
-func (r *Report) addUnmatchedFileWarnings(changedNodes []*parser.Node) {
-	nodesByPath := nodesByComparablePath(changedNodes)
+func (r *Report) addUnmatchedFileWarnings(changedNodes []*parser.Node, pathCache map[string]string) {
+	nodesByPath := nodesByComparablePath(changedNodes, pathCache)
 	for _, changed := range r.ChangedFiles {
-		if changedFileHasMatchingNode(changed, nodesByPath[comparableImpactPath(changed.AbsolutePath)]) {
+		if changedFileHasMatchingNode(changed, nodesByPath[comparableImpactPath(changed.AbsolutePath, pathCache)], pathCache) {
 			continue
 		}
 		r.Warnings = append(r.Warnings, fmt.Sprintf(
@@ -420,35 +470,35 @@ func (r *Report) addUnmatchedFileWarnings(changedNodes []*parser.Node) {
 	}
 }
 
-func nodesByComparablePath(nodes []*parser.Node) map[string][]*parser.Node {
+func nodesByComparablePath(nodes []*parser.Node, pathCache map[string]string) map[string][]*parser.Node {
 	nodesByPath := make(map[string][]*parser.Node)
 	for _, node := range nodes {
 		if node == nil || node.FilePath == "" {
 			continue
 		}
-		path := comparableImpactPath(node.FilePath)
+		path := comparableImpactPath(node.FilePath, pathCache)
 		nodesByPath[path] = append(nodesByPath[path], node)
 	}
 	return nodesByPath
 }
 
-func changedFileHasMatchingNode(changed ChangedFile, nodes []*parser.Node) bool {
+func changedFileHasMatchingNode(changed ChangedFile, nodes []*parser.Node, pathCache map[string]string) bool {
 	for _, node := range nodes {
-		if changedFileMatchesNode(changed, node) {
+		if changedFileMatchesNode(changed, node, pathCache) {
 			return true
 		}
 	}
 	return false
 }
 
-func changedFileMatchesNode(changed ChangedFile, node *parser.Node) bool {
+func changedFileMatchesNode(changed ChangedFile, node *parser.Node, pathCache map[string]string) bool {
 	if node == nil || node.FilePath == "" {
 		return false
 	}
 	if changed.RepoID != "" && node.RepoID != "" && changed.RepoID != node.RepoID {
 		return false
 	}
-	if comparableImpactPath(changed.AbsolutePath) != comparableImpactPath(node.FilePath) {
+	if comparableImpactPath(changed.AbsolutePath, pathCache) != comparableImpactPath(node.FilePath, pathCache) {
 		return false
 	}
 	if changed.WholeFile {
@@ -477,21 +527,31 @@ func lineRangeOverlapsNode(r LineRange, node *parser.Node) bool {
 	return node.Lines[0] <= end && node.Lines[1] >= start
 }
 
-func comparableImpactPath(path string) string {
+func comparableImpactPath(path string, pathCache map[string]string) string {
 	if path == "" {
 		return ""
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
+	if cached, ok := pathCache[path]; ok {
+		return cached
 	}
-	cleaned := filepath.Clean(path)
+	
+	resolvedPath := path
+	if abs, err := filepath.Abs(resolvedPath); err == nil {
+		resolvedPath = abs
+	}
+	cleaned := filepath.Clean(resolvedPath)
 	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-		return filepath.Clean(resolved)
+		final := filepath.Clean(resolved)
+		pathCache[path] = final
+		return final
 	}
 	parent := filepath.Dir(cleaned)
 	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
-		return filepath.Join(resolvedParent, filepath.Base(cleaned))
+		final := filepath.Join(resolvedParent, filepath.Base(cleaned))
+		pathCache[path] = final
+		return final
 	}
+	pathCache[path] = cleaned
 	return cleaned
 }
 
