@@ -31,6 +31,7 @@ GoKG is intentionally focused on Go. Choose a polyglot or visualization-first to
 - **Semantic relationships**: Maps `CALLS`, `IMPORTS`, `CONTAINS`, `REFERENCES`, `INSTANTIATES`, `IMPLEMENTS`, `SPAWNS`, `SENDS_TO`, `RECEIVES_FROM`, and `REGISTERS_ROUTE`.
 - **Cypher query engine**: Runs a strict Neo4j-inspired Cypher subset so AI agents can build custom graph queries safely.
 - **MCP server for AI agents**: Serves JSON-RPC 2.0 over `stdio` and `HTTP` for IDEs and coding agents.
+- **Change impact analysis**: Maps Git diffs to graph nodes and reports inbound dependency impact for local repos and multi-repo workspaces.
 - **Real-time incremental updates**: Optional file watcher reparses changed packages, refreshes repository structure, and merges updates into the live graph.
 - **Multi-repo workspaces**: Merges multiple Go repositories into one graph while storing each repo in its own BadgerDB.
 - **Graph statistics**: Reports node/edge/file counts, DB size, RAM estimate, node kinds, edge kinds, repo breakdowns, and top packages.
@@ -182,7 +183,31 @@ gokg export --format json --out graph.json
 gokg export --workspace my-platform --format json --out workspace-graph.json
 ```
 
-### 6. Multi-Repo Workspaces
+### 6. Analyze Change Impact
+
+```bash
+# Default: tracked staged + unstaged + untracked changes against HEAD
+gokg impact
+
+# Inspect second-hop dependents
+gokg impact --depth 2
+
+# Cap very large change sets
+gokg impact --max-files 500 --max-nodes 200
+
+# Only tracked staged + unstaged files
+gokg impact --tracked-only
+
+# Machine-readable report
+gokg impact --json
+
+# Workspace impact grouped by repo
+gokg impact --workspace my-platform --base main
+```
+
+`gokg impact` reads existing graph databases; run `gokg analyze --rebuild` first when the graph is stale. It maps changed Git hunks to graph nodes, reports changed nodes, and lists dependency nodes that depend on them. Use `--max-files` and `--max-nodes` to cap large reports.
+
+### 7. Multi-Repo Workspaces
 
 ```bash
 gokg workspace init my-platform
@@ -201,7 +226,7 @@ gokg workspace remove my-platform github.com/org/service-a
 
 ## MCP Tools for AI Agents
 
-When connected through `gokg mcp`, GoKG exposes 10 tools:
+When connected through `gokg mcp`, GoKG exposes 11 tools:
 
 | Tool | Description |
 |---|---|
@@ -212,6 +237,7 @@ When connected through `gokg mcp`, GoKG exposes 10 tools:
 | `get_implementations` | Structs implementing a given interface |
 | `get_source_code` | Raw Go source for a node |
 | `get_repository_structure` | Repository folder/package/file tree from the graph |
+| `get_change_impact` | Git diff to changed graph nodes and dependency impact |
 | `find_path` | Shortest call path between two nodes |
 | `search_nodes` | Find nodes by name or ID substring |
 | `execute_cypher` | Run strict read-only Cypher queries against the graph |

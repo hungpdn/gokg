@@ -61,6 +61,95 @@ func TestGraphConstructionAndQuery(t *testing.T) {
 	assert.Equal(t, "chanC", flows[0].ID)
 }
 
+func TestNodesForFileRangesAndBlastRadiusDepth(t *testing.T) {
+	g := NewGraph(nil)
+	ctx := context.Background()
+	filePath := filepath.Join(t.TempDir(), "service.go")
+
+	nodes := []*parser.Node{
+		{ID: "pkg.Changed", Type: parser.NodeTypeFunc, Name: "Changed", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{10, 20}, RepoID: "repo-a"},
+		{ID: "pkg.Other", Type: parser.NodeTypeFunc, Name: "Other", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{30, 40}, RepoID: "repo-a"},
+		{ID: "pkg.Direct", Type: parser.NodeTypeFunc, Name: "Direct", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{50, 60}, RepoID: "repo-a"},
+		{ID: "pkg.Second", Type: parser.NodeTypeFunc, Name: "Second", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{70, 80}, RepoID: "repo-a"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Direct", To: "pkg.Changed", Type: parser.EdgeTypeCalls, RepoID: "repo-a"}))
+	require.NoError(t, g.AddEdge(ctx, &parser.Edge{From: "pkg.Second", To: "pkg.Direct", Type: parser.EdgeTypeReferences, RepoID: "repo-a"}))
+
+	matched, err := g.Query().NodesForFileRanges([]FileRange{{
+		FilePath:  filePath,
+		StartLine: 12,
+		EndLine:   12,
+		RepoID:    "repo-a",
+	}})
+	require.NoError(t, err)
+	require.Len(t, matched, 1)
+	assert.Equal(t, "pkg.Changed", matched[0].ID)
+
+	depthOne, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 1, 10)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, depthOne, 1)
+	assert.Equal(t, "pkg.Direct", depthOne[0].Node.ID)
+	assert.Equal(t, 1, depthOne[0].Distance)
+
+	depthTwo, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 2, 10)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, depthTwo, 2)
+	assert.Equal(t, "pkg.Direct", depthTwo[0].Node.ID)
+	assert.Equal(t, "pkg.Second", depthTwo[1].Node.ID)
+	assert.Equal(t, 2, depthTwo[1].Distance)
+}
+
+func TestNodesForFileRangesMatchesLegacyBlankRepoID(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	filePath := filepath.Join(t.TempDir(), "legacy.go")
+
+	for _, node := range []*parser.Node{
+		{ID: "legacy.Match", Type: parser.NodeTypeFunc, Name: "Match", FilePath: filePath, Lines: [2]int{1, 5}},
+		{ID: "other.Skip", Type: parser.NodeTypeFunc, Name: "Skip", FilePath: filePath, Lines: [2]int{1, 5}, RepoID: "repo-b"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	matched, err := g.Query().NodesForFileRanges([]FileRange{{
+		FilePath:  filePath,
+		StartLine: 3,
+		EndLine:   3,
+		RepoID:    "repo-a",
+	}})
+	require.NoError(t, err)
+	require.Len(t, matched, 1)
+	assert.Equal(t, "legacy.Match", matched[0].ID)
+}
+
+func TestRepositoryRootsReturnsSingleAndWorkspaceRoots(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	rootA := filepath.Join(t.TempDir(), "service-a")
+	rootB := filepath.Join(t.TempDir(), "service-b")
+
+	for _, node := range []*parser.Node{
+		{ID: "repo:service-a:folder:.", Type: parser.NodeTypeFolder, Name: "service-a", FilePath: rootA, RepoID: "service-a"},
+		{ID: "repo:service-b:folder:.", Type: parser.NodeTypeFolder, Name: "service-b", FilePath: rootB, RepoID: "service-b"},
+		{ID: "repo:service-a:folder:internal", Type: parser.NodeTypeFolder, Name: "internal", FilePath: filepath.Join(rootA, "internal"), RepoID: "service-a"},
+	} {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	roots := g.Query().RepositoryRoots()
+	require.Len(t, roots, 2)
+	assert.Equal(t, RepositoryRoot{RepoID: "service-a", Root: filepath.Clean(rootA)}, roots[0])
+	assert.Equal(t, RepositoryRoot{RepoID: "service-b", Root: filepath.Clean(rootB)}, roots[1])
+}
+
 func TestDependenciesAndBlastRadiusUseSemanticDependencyEdges(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)

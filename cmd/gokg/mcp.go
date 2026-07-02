@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
+	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/mcp"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
@@ -44,18 +45,22 @@ var mcpCmd = &cobra.Command{
 				return fmt.Errorf("--module cannot be used with --workspace; workspace mode detects each repo module from go.mod")
 			}
 
+			ws, err := workspace.Load(workspaceName)
+			if err != nil {
+				return err
+			}
+			repos := sortedWorkspaceRepos(ws)
 			g, err := loadWorkspaceGraph(ctx, workspaceName)
 			if err != nil {
 				return err
 			}
+			impactRepos := make([]impact.Repo, 0, len(repos))
+			for _, repo := range repos {
+				impactRepos = append(impactRepos, impact.Repo{ID: repo.ID, Root: repo.Path})
+			}
 
 			if enableWatch {
-				ws, err := workspace.Load(workspaceName)
-				if err != nil {
-					return fmt.Errorf("failed to load workspace for watch: %w", err)
-				}
-
-				for _, repo := range sortedWorkspaceRepos(ws) {
+				for _, repo := range repos {
 					analysisRoot, err := resolveGoAnalysisRoot(repo.Path)
 					if err != nil {
 						log.Printf("Warning: Failed to resolve Go root for repo %q: %v", repo.ID, err)
@@ -96,20 +101,8 @@ var mcpCmd = &cobra.Command{
 				}
 			}
 
-			server := mcp.NewServer(g)
+			server := mcp.NewServer(g, mcp.WithImpactRepos(impactRepos))
 			return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
-		}
-
-		analysisRoot, err := resolveGoAnalysisRoot(".")
-		if err != nil {
-			return err
-		}
-		// Detect module automatically if not provided.
-		if modulePrefix == "" {
-			modulePrefix = analysisRoot.ModulePrefix
-			if modulePrefix == "" {
-				modulePrefix = "gokg"
-			}
 		}
 
 		// Init Storage
@@ -129,6 +122,21 @@ var mcpCmd = &cobra.Command{
 			return err
 		}
 		g.SetStore(nil)
+
+		analysisRoot, impactRepo, err := resolveSingleGraphImpactRepo(g, ".", modulePrefix)
+		if err != nil {
+			return err
+		}
+		// Detect module automatically if not provided.
+		if modulePrefix == "" {
+			modulePrefix = analysisRoot.ModulePrefix
+			if modulePrefix == "" {
+				modulePrefix = impactRepo.ID
+			}
+			if modulePrefix == "" {
+				modulePrefix = "gokg"
+			}
+		}
 
 		if enableWatch {
 			p := parser.NewParser(modulePrefix, modulePrefix)
@@ -159,7 +167,7 @@ var mcpCmd = &cobra.Command{
 			}
 		}
 
-		server := mcp.NewServer(g)
+		server := mcp.NewServer(g, mcp.WithImpactRepos([]impact.Repo{impactRepo}))
 		return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 	},
 }

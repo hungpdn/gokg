@@ -25,5 +25,6 @@ func init() {
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(statsCmd)
+	rootCmd.AddCommand(impactCmd)
 	rootCmd.AddCommand(versionCmd)
 }

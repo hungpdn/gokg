@@ -4,6 +4,33 @@ All notable changes to GoKG will be documented in this file.
 
 The format follows Keep a Changelog, and this project uses semantic versioning once tagged releases begin.
 
+## [Unreleased]
+
+### Added
+
+- `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
+- `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
+- Graph query support for mapping changed file ranges to graph nodes and bounded inbound dependency blast-radius traversal.
+- `make security` target for running `govulncheck ./...`.
+
+### Changed
+
+- MCP tool handling is split into dedicated tool definitions and handlers.
+- MCP HTTP and stdio request contexts now propagate into long-running tool calls such as change impact analysis.
+- Change impact analysis now includes untracked Git files by default, with `--tracked-only` available for tracked-only reports.
+- Change impact analysis now caps changed-file processing with configurable `--max-files` and MCP `max_files` limits.
+- README documents change impact analysis and the expanded MCP tool list.
+
+### Fixed
+
+- Hardened impact `base_ref` validation against Git option injection and control characters.
+- Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
+- Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.
+- Improved repo-aware file-range matching with normalized paths, symlink handling, and legacy blank `RepoID` compatibility.
+- Single-repo impact and MCP mode now infer the analyzed repo root from graph metadata when available, avoiding custom `--db` and current-working-directory mismatches.
+- Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.
+- Impact Markdown output now escapes inline values such as repo IDs, node names, file paths, and base refs.
+
 ## [v0.1.0-alpha.4] - 2026-06-26
 
 ### Changed
