@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const fakeBaseCommit = "abc123"
+
 func TestParseDiffHunksAndWholeFiles(t *testing.T) {
 	repo := Repo{ID: "repo-a", Root: "/repo"}
 	diff := `diff --git a/app.go b/app.go
@@ -72,6 +74,32 @@ rename to new.go
 	assert.Empty(t, files[1].Ranges)
 }
 
+func TestParseDiffHandlesLongLines(t *testing.T) {
+	repo := Repo{ID: "repo-a", Root: "/repo"}
+	diff := "diff --git a/generated.go b/generated.go\n" +
+		"--- a/generated.go\n" +
+		"+++ b/generated.go\n" +
+		"@@ -1 +1 @@\n" +
+		"+" + strings.Repeat("x", 70*1024) + "\n"
+
+	files, err := ParseDiff(repo, strings.NewReader(diff))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "generated.go", files[0].Path)
+	assert.Equal(t, []LineRange{{Start: 1, End: 1}}, files[0].Ranges)
+}
+
+func TestParseUntrackedUsesNULAndPreservesWhitespace(t *testing.T) {
+	repo := Repo{ID: "repo-a", Root: "/repo"}
+
+	files, err := ParseUntracked(repo, strings.NewReader(" leading.go\x00trailing .go\x00dir/with\nnewline.go\x00"))
+	require.NoError(t, err)
+	require.Len(t, files, 3)
+	assert.Equal(t, " leading.go", files[0].Path)
+	assert.Equal(t, "trailing .go", files[1].Path)
+	assert.Equal(t, "dir/with\nnewline.go", files[2].Path)
+}
+
 func TestAnalyzeMapsChangesAndBlastRadiusDepth(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -97,7 +125,8 @@ func TestAnalyzeMapsChangesAndBlastRadiusDepth(t *testing.T) {
 `
 	runner := fakeRunner{
 		responses: map[string]string{
-			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", "HEAD"): diff,
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):               fakeBaseCommit + "\n",
+			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", fakeBaseCommit, "--"): diff,
 		},
 	}
 
@@ -135,8 +164,9 @@ deleted file mode 100644
 `
 	runner := fakeRunner{
 		responses: map[string]string{
-			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", "HEAD"): diff,
-			fakeCommandKey(root, "git", "ls-files", "--others", "--exclude-standard"):                 "new.go\n",
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):               fakeBaseCommit + "\n",
+			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", fakeBaseCommit, "--"): diff,
+			fakeCommandKey(root, "git", "ls-files", "-z", "--others", "--exclude-standard"):                         "new.go\x00",
 		},
 	}
 
@@ -154,10 +184,61 @@ deleted file mode 100644
 	assert.Contains(t, strings.Join(report.Warnings, "\n"), "new.go")
 }
 
+func TestAnalyzeTruncatesChangedFilesAtMaxFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	g := graph.NewGraph(nil)
+	diff := `diff --git a/a.go b/a.go
+--- a/a.go
++++ b/a.go
+@@ -1 +1 @@
++a
+diff --git a/b.go b/b.go
+--- a/b.go
++++ b/b.go
+@@ -1 +1 @@
++b
+`
+	runner := fakeRunner{
+		responses: map[string]string{
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):               fakeBaseCommit + "\n",
+			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", fakeBaseCommit, "--"): diff,
+		},
+	}
+
+	report, err := AnalyzeWithRunner(
+		ctx,
+		g,
+		[]Repo{{ID: "repo-a", Root: root}},
+		Options{MaxDepth: 1, MaxNodes: 100, MaxFiles: 1},
+		runner,
+	)
+	require.NoError(t, err)
+	require.Len(t, report.ChangedFiles, 1)
+	assert.Equal(t, "a.go", report.ChangedFiles[0].Path)
+	assert.Contains(t, strings.Join(report.Warnings, "\n"), "changed files truncated at max_files=1")
+}
+
+func TestChangedFilesForRepoVerifiesBaseRef(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runner := fakeRunner{
+		errors: map[string]error{
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "missing^{commit}"): fmt.Errorf("unknown revision"),
+		},
+	}
+
+	_, err := changedFilesForRepo(ctx, runner, Repo{ID: "repo-a", Root: root}, NormalizeOptions(Options{BaseRef: "missing"}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid base ref "missing"`)
+}
+
 func TestValidateOptionsRejectsUnsafeBaseRef(t *testing.T) {
 	for _, baseRef := range []string{
 		"--cached",
 		"-HEAD",
+		"^HEAD",
+		"main..next",
 		"main\nnext",
 		"main\x7f",
 	} {

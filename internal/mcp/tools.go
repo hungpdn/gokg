@@ -151,6 +151,12 @@ func (s *Server) toolDefinitions() []toolDefinition {
 					"minimum":     1,
 					"maximum":     impact.MaxNodesLimit,
 				},
+				"max_files": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum changed files to analyze. Defaults to %d.", impact.DefaultMaxFiles),
+					"minimum":     1,
+					"maximum":     impact.MaxFilesLimit,
+				},
 				"include_untracked": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Include untracked Git files. Defaults to true.",
@@ -363,6 +369,7 @@ func (s *Server) handleGetChangeImpactTool(ctx context.Context, id interface{}, 
 		BaseRef          string `json:"base_ref"`
 		MaxDepth         int    `json:"max_depth"`
 		MaxNodes         int    `json:"max_nodes"`
+		MaxFiles         int    `json:"max_files"`
 		IncludeUntracked *bool  `json:"include_untracked"`
 	}](raw)
 	if err != nil {
@@ -379,6 +386,7 @@ func (s *Server) handleGetChangeImpactTool(ctx context.Context, id interface{}, 
 		BaseRef:          args.BaseRef,
 		MaxDepth:         args.MaxDepth,
 		MaxNodes:         args.MaxNodes,
+		MaxFiles:         args.MaxFiles,
 		IncludeUntracked: includeUntracked,
 	})
 	if err != nil {

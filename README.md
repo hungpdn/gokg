@@ -192,6 +192,9 @@ gokg impact
 # Inspect second-hop dependents
 gokg impact --depth 2
 
+# Cap very large change sets
+gokg impact --max-files 500 --max-nodes 200
+
 # Only tracked staged + unstaged files
 gokg impact --tracked-only
 
@@ -202,7 +205,7 @@ gokg impact --json
 gokg impact --workspace my-platform --base main
 ```
 
-`gokg impact` reads existing graph databases; run `gokg analyze --rebuild` first when the graph is stale. It maps changed Git hunks to graph nodes, reports changed nodes, and lists dependency nodes that depend on them. Use `--max-nodes` to cap large reports.
+`gokg impact` reads existing graph databases; run `gokg analyze --rebuild` first when the graph is stale. It maps changed Git hunks to graph nodes, reports changed nodes, and lists dependency nodes that depend on them. Use `--max-files` and `--max-nodes` to cap large reports.
 
 ### 7. Multi-Repo Workspaces
 

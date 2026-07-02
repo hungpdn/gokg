@@ -26,6 +26,7 @@ func newImpactCommand() *cobra.Command {
 	cmd.Flags().String("base", impact.DefaultBaseRef, "Git base ref for diff analysis")
 	cmd.Flags().Int("depth", impact.DefaultMaxDepth, "Maximum inbound dependency depth")
 	cmd.Flags().Int("max-nodes", impact.DefaultMaxNodes, "Maximum impacted nodes to return")
+	cmd.Flags().Int("max-files", impact.DefaultMaxFiles, "Maximum changed files to analyze")
 	cmd.Flags().Bool("include-untracked", true, "Include untracked Git files")
 	cmd.Flags().Bool("tracked-only", false, "Analyze only tracked Git changes")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
@@ -39,6 +40,7 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 	baseRef, _ := cmd.Flags().GetString("base")
 	maxDepth, _ := cmd.Flags().GetInt("depth")
 	maxNodes, _ := cmd.Flags().GetInt("max-nodes")
+	maxFiles, _ := cmd.Flags().GetInt("max-files")
 	includeUntracked, _ := cmd.Flags().GetBool("include-untracked")
 	trackedOnly, _ := cmd.Flags().GetBool("tracked-only")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
@@ -48,11 +50,15 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 		}
 		includeUntracked = false
 	}
+	if cmd.Flags().Changed("max-files") && maxFiles == 0 {
+		return fmt.Errorf("max files must be between 1 and %d", impact.MaxFilesLimit)
+	}
 
 	opts := impact.NormalizeOptions(impact.Options{
 		BaseRef:          baseRef,
 		MaxDepth:         maxDepth,
 		MaxNodes:         maxNodes,
+		MaxFiles:         maxFiles,
 		IncludeUntracked: includeUntracked,
 	})
 	if err := impact.ValidateOptions(opts); err != nil {

@@ -23,8 +23,12 @@ const (
 	DefaultBaseRef  = "HEAD"
 	DefaultMaxDepth = 1
 	DefaultMaxNodes = 100
+	DefaultMaxFiles = 1000
 	MaxDepthLimit   = 5
 	MaxNodesLimit   = 500
+	MaxFilesLimit   = 10000
+
+	maxImpactRepoWorkers = 8
 )
 
 var errAllReposFailed = errors.New("impact analysis failed for all repositories")
@@ -34,6 +38,7 @@ type Options struct {
 	BaseRef          string
 	MaxDepth         int
 	MaxNodes         int
+	MaxFiles         int
 	IncludeUntracked bool
 }
 
@@ -149,6 +154,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 	}
 
 	eg, ctxGroup := errgroup.WithContext(ctx)
+	eg.SetLimit(impactRepoWorkerLimit(len(repos)))
 
 	repoReports := make([]RepoReport, len(repos))
 	repoFiles := make([][]ChangedFile, len(repos))
@@ -192,6 +198,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		return nil, fmt.Errorf("%w: %s", errAllReposFailed, strings.Join(report.Warnings, "; "))
 	}
 	sortChangedFiles(report.ChangedFiles)
+	report.truncateChangedFiles(opts.MaxFiles)
 
 	fileRanges := make([]graph.FileRange, 0)
 	for _, changed := range report.ChangedFiles {
@@ -242,6 +249,9 @@ func NormalizeOptions(opts Options) Options {
 	if opts.MaxNodes == 0 {
 		opts.MaxNodes = DefaultMaxNodes
 	}
+	if opts.MaxFiles == 0 {
+		opts.MaxFiles = DefaultMaxFiles
+	}
 	return opts
 }
 
@@ -255,6 +265,9 @@ func ValidateOptions(opts Options) error {
 	if opts.MaxNodes < 1 || opts.MaxNodes > MaxNodesLimit {
 		return fmt.Errorf("max nodes must be between 1 and %d", MaxNodesLimit)
 	}
+	if opts.MaxFiles < 1 || opts.MaxFiles > MaxFilesLimit {
+		return fmt.Errorf("max files must be between 1 and %d", MaxFilesLimit)
+	}
 	return nil
 }
 
@@ -267,6 +280,12 @@ func validateBaseRef(baseRef string) error {
 	}
 	if strings.HasPrefix(baseRef, "-") {
 		return fmt.Errorf("base ref must not start with '-'")
+	}
+	if strings.HasPrefix(baseRef, "^") {
+		return fmt.Errorf("base ref must not start with '^'")
+	}
+	if strings.Contains(baseRef, "..") {
+		return fmt.Errorf("base ref must be a single revision, not a range")
 	}
 	if !baseRefRegexp.MatchString(baseRef) {
 		return fmt.Errorf("base ref contains invalid characters")
@@ -298,8 +317,23 @@ func normalizeRepos(repos []Repo) []Repo {
 	return normalized
 }
 
+func impactRepoWorkerLimit(repoCount int) int {
+	if repoCount < 1 {
+		return 1
+	}
+	if repoCount < maxImpactRepoWorkers {
+		return repoCount
+	}
+	return maxImpactRepoWorkers
+}
+
 func changedFilesForRepo(ctx context.Context, runner CommandRunner, repo Repo, opts Options) ([]ChangedFile, error) {
-	diffArgs := []string{"diff", "--unified=0", "--no-ext-diff", "--no-color", opts.BaseRef}
+	baseCommit, err := resolveBaseCommit(ctx, runner, repo, opts.BaseRef)
+	if err != nil {
+		return nil, err
+	}
+
+	diffArgs := []string{"diff", "--unified=0", "--no-ext-diff", "--no-color", baseCommit, "--"}
 	diffOutput, err := runner.Run(ctx, repo.Root, "git", diffArgs...)
 	if err != nil {
 		return nil, err
@@ -310,14 +344,30 @@ func changedFilesForRepo(ctx context.Context, runner CommandRunner, repo Repo, o
 		return nil, err
 	}
 	if opts.IncludeUntracked {
-		untrackedOutput, err := runner.Run(ctx, repo.Root, "git", "ls-files", "--others", "--exclude-standard")
+		untrackedOutput, err := runner.Run(ctx, repo.Root, "git", "ls-files", "-z", "--others", "--exclude-standard")
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, ParseUntracked(repo, bytes.NewReader(untrackedOutput))...)
+		untrackedFiles, err := ParseUntracked(repo, bytes.NewReader(untrackedOutput))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, untrackedFiles...)
 	}
 	sortChangedFiles(files)
 	return files, nil
+}
+
+func resolveBaseCommit(ctx context.Context, runner CommandRunner, repo Repo, baseRef string) (string, error) {
+	out, err := runner.Run(ctx, repo.Root, "git", "rev-parse", "--verify", "--end-of-options", baseRef+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("invalid base ref %q: %w", baseRef, err)
+	}
+	commit := strings.TrimSpace(string(out))
+	if commit == "" {
+		return "", fmt.Errorf("invalid base ref %q: resolved empty commit", baseRef)
+	}
+	return commit, nil
 }
 
 // ParseDiff parses unified diff output into a list of ChangedFiles.
@@ -340,53 +390,63 @@ func ParseDiff(repo Repo, r io.Reader) ([]ChangedFile, error) {
 		current = nil
 	}
 
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "diff --git a/") {
-			flush()
-			rest := strings.TrimPrefix(line, "diff --git a/")
-			idx := strings.LastIndex(rest, " b/")
-			path := ""
-			if idx != -1 {
-				path = rest[idx+3:]
-				if path == "/dev/null" {
-					path = rest[:idx]
-				}
-			}
-			current = &ChangedFile{RepoID: repo.ID, Path: path, Status: "M"}
-			continue
+	reader := bufio.NewReader(r)
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimRight(line, "\r\n")
+			parseDiffLine(repo, line, flush, &current)
 		}
-		if current == nil {
-			continue
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		switch {
-		case strings.HasPrefix(line, "new file mode"):
-			current.Status = "A"
-		case strings.HasPrefix(line, "deleted file mode"):
-			current.Status = "D"
-			current.WholeFile = true
-		case strings.HasPrefix(line, "rename from "):
-			current.Status = "R"
-		case strings.HasPrefix(line, "rename to "):
-			current.Status = "R"
-			current.Path = strings.TrimSpace(strings.TrimPrefix(line, "rename to "))
-		case strings.HasPrefix(line, "+++ b/"):
-			current.Path = strings.TrimPrefix(line, "+++ b/")
-		case strings.HasPrefix(line, "--- a/") && current.Path == "":
-			current.Path = strings.TrimPrefix(line, "--- a/")
-		case strings.HasPrefix(line, "@@ "):
-			rg, ok := parseHunkRange(line)
-			if ok {
-				current.Ranges = append(current.Ranges, rg)
-			}
+		if err != nil {
+			return nil, err
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 	flush()
 	return files, nil
+}
+
+func parseDiffLine(repo Repo, line string, flush func(), current **ChangedFile) {
+	if strings.HasPrefix(line, "diff --git a/") {
+		flush()
+		rest := strings.TrimPrefix(line, "diff --git a/")
+		idx := strings.LastIndex(rest, " b/")
+		path := ""
+		if idx != -1 {
+			path = rest[idx+3:]
+			if path == "/dev/null" {
+				path = rest[:idx]
+			}
+		}
+		*current = &ChangedFile{RepoID: repo.ID, Path: path, Status: "M"}
+		return
+	}
+	if *current == nil {
+		return
+	}
+	switch {
+	case strings.HasPrefix(line, "new file mode"):
+		(*current).Status = "A"
+	case strings.HasPrefix(line, "deleted file mode"):
+		(*current).Status = "D"
+		(*current).WholeFile = true
+	case strings.HasPrefix(line, "rename from "):
+		(*current).Status = "R"
+	case strings.HasPrefix(line, "rename to "):
+		(*current).Status = "R"
+		(*current).Path = strings.TrimSpace(strings.TrimPrefix(line, "rename to "))
+	case strings.HasPrefix(line, "+++ b/"):
+		(*current).Path = strings.TrimPrefix(line, "+++ b/")
+	case strings.HasPrefix(line, "--- a/") && (*current).Path == "":
+		(*current).Path = strings.TrimPrefix(line, "--- a/")
+	case strings.HasPrefix(line, "@@ "):
+		rg, ok := parseHunkRange(line)
+		if ok {
+			(*current).Ranges = append((*current).Ranges, rg)
+		}
+	}
 }
 
 func parseHunkRange(line string) (LineRange, bool) {
@@ -428,14 +488,21 @@ func parseHunkRange(line string) (LineRange, bool) {
 	return LineRange{Start: start, End: start + count - 1}, true
 }
 
-func ParseUntracked(repo Repo, r io.Reader) []ChangedFile {
+func ParseUntracked(repo Repo, r io.Reader) ([]ChangedFile, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
 	var files []ChangedFile
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		path := strings.TrimSpace(scanner.Text())
-		if path == "" {
+	parts := bytes.Split(data, []byte{0})
+	if !bytes.Contains(data, []byte{0}) {
+		parts = bytes.Split(data, []byte{'\n'})
+	}
+	for _, rawPath := range parts {
+		if len(rawPath) == 0 {
 			continue
 		}
+		path := strings.TrimSuffix(string(rawPath), "\r")
 		files = append(files, ChangedFile{
 			RepoID:       repo.ID,
 			Path:         filepath.ToSlash(path),
@@ -445,7 +512,7 @@ func ParseUntracked(repo Repo, r io.Reader) []ChangedFile {
 			Untracked:    true,
 		})
 	}
-	return files
+	return files, nil
 }
 
 func cleanRepoFile(root string, rel string) string {
@@ -491,6 +558,19 @@ func (r *Report) addUnmatchedFileWarnings(changedNodes []*parser.Node, pathCache
 			changed.AbsolutePath,
 		))
 	}
+}
+
+func (r *Report) truncateChangedFiles(maxFiles int) {
+	if maxFiles <= 0 || len(r.ChangedFiles) <= maxFiles {
+		return
+	}
+	total := len(r.ChangedFiles)
+	r.ChangedFiles = append([]ChangedFile(nil), r.ChangedFiles[:maxFiles]...)
+	r.Warnings = append(r.Warnings, fmt.Sprintf(
+		"changed files truncated at max_files=%d from %d total files; impact only includes listed files",
+		maxFiles,
+		total,
+	))
 }
 
 func nodesByComparablePath(nodes []*parser.Node, pathCache map[string]string) map[string][]*parser.Node {

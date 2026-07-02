@@ -86,6 +86,15 @@ func TestImpactTrackedOnlyRejectsExplicitIncludeUntracked(t *testing.T) {
 	assert.Contains(t, err.Error(), "--tracked-only cannot be used with --include-untracked=true")
 }
 
+func TestImpactRejectsInvalidMaxFiles(t *testing.T) {
+	cmd := newImpactCommand()
+	cmd.SetArgs([]string{"--max-files", "0"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max files")
+}
+
 func TestImpactUsesGraphRootForCustomDB(t *testing.T) {
 	_, dbDir := newImpactGitRepoAndDB(t, true)
 	withWorkingDir(t, t.TempDir())

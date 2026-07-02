@@ -62,11 +62,12 @@ func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, 
 	results := make([]*parser.Node, 0)
 	seen := make(map[string]bool)
 	rangesByPath := make(map[string][]FileRange)
+	pathCache := make(map[string]string, len(ranges))
 	for _, r := range ranges {
 		if r.FilePath == "" {
 			continue
 		}
-		r.FilePath = comparableFilePath(r.FilePath)
+		r.FilePath = comparableFilePathCached(r.FilePath, pathCache)
 		rangesByPath[r.FilePath] = append(rangesByPath[r.FilePath], r)
 	}
 	if len(rangesByPath) == 0 {
@@ -80,7 +81,7 @@ func (qb *QueryBuilder) NodesForFileRanges(ranges []FileRange) ([]*parser.Node, 
 		if seen[node.ID] {
 			continue
 		}
-		nodePath := comparableFilePath(node.FilePath)
+		nodePath := comparableFilePathCached(node.FilePath, pathCache)
 		for _, r := range rangesByPath[nodePath] {
 			if !fileRangeMatchesNodeRepo(r, node) {
 				continue
@@ -101,14 +102,30 @@ func fileRangeMatchesNodeRepo(r FileRange, node *parser.Node) bool {
 	return r.RepoID == "" || node.RepoID == "" || node.RepoID == r.RepoID
 }
 
-func comparableFilePath(path string) string {
+func comparableFilePathCached(path string, cache map[string]string) string {
+	if cache != nil {
+		if cached, ok := cache[path]; ok {
+			return cached
+		}
+	}
 	cleaned := cleanAbsPath(path)
 	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-		return filepath.Clean(resolved)
+		final := filepath.Clean(resolved)
+		if cache != nil {
+			cache[path] = final
+		}
+		return final
 	}
 	parent := filepath.Dir(cleaned)
 	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
-		return filepath.Join(resolvedParent, filepath.Base(cleaned))
+		final := filepath.Join(resolvedParent, filepath.Base(cleaned))
+		if cache != nil {
+			cache[path] = final
+		}
+		return final
+	}
+	if cache != nil {
+		cache[path] = cleaned
 	}
 	return cleaned
 }
@@ -203,6 +220,7 @@ func (qb *QueryBuilder) GetBlastRadiusDepth(nodeIDs []string, maxDepth int, maxN
 	for id := range sourceIDs {
 		seen[id] = 0
 	}
+	inboundDependencyIDs := qb.inboundDependencyNodeIDsByTargetLocked()
 	resultsByID := make(map[int64]NodeDistance)
 	truncated := false
 
@@ -214,7 +232,7 @@ func (qb *QueryBuilder) GetBlastRadiusDepth(nodeIDs []string, maxDepth int, maxN
 		currentID := qb.g.nodeMap[current.Node.ID]
 		nextDistance := current.Distance + 1
 
-		inboundIDs := qb.inboundDependencyNodeIDsLocked(currentID)
+		inboundIDs := inboundDependencyIDs[currentID]
 		for _, fromID := range inboundIDs {
 			if sourceIDs[fromID] || qb.g.nodes[fromID] == nil {
 				continue
@@ -236,24 +254,28 @@ func (qb *QueryBuilder) GetBlastRadiusDepth(nodeIDs []string, maxDepth int, maxN
 	return sortedNodeDistances(resultsByID), truncated, nil
 }
 
-func (qb *QueryBuilder) inboundDependencyNodeIDsLocked(targetID int64) []int64 {
-	ids := make([]int64, 0)
+func (qb *QueryBuilder) inboundDependencyNodeIDsByTargetLocked() map[int64][]int64 {
+	inbound := make(map[int64][]int64)
 	for fromID, outEdges := range qb.g.edges {
-		edges, ok := outEdges[targetID]
-		if !ok || !hasDependencyEdge(edges) {
-			continue
+		for toID, edges := range outEdges {
+			if !hasDependencyEdge(edges) {
+				continue
+			}
+			inbound[toID] = append(inbound[toID], fromID)
 		}
-		ids = append(ids, fromID)
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		left := qb.g.nodes[ids[i]]
-		right := qb.g.nodes[ids[j]]
-		if left == nil || right == nil {
-			return ids[i] < ids[j]
-		}
-		return left.ID < right.ID
-	})
-	return ids
+	for targetID, ids := range inbound {
+		sort.Slice(ids, func(i, j int) bool {
+			left := qb.g.nodes[ids[i]]
+			right := qb.g.nodes[ids[j]]
+			if left == nil || right == nil {
+				return ids[i] < ids[j]
+			}
+			return left.ID < right.ID
+		})
+		inbound[targetID] = ids
+	}
+	return inbound
 }
 
 func sortedNodeDistances(resultsByID map[int64]NodeDistance) []NodeDistance {
