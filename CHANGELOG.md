@@ -11,6 +11,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
 - `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
 - Graph query support for mapping changed file ranges to graph nodes and bounded inbound dependency blast-radius traversal.
+- Impact analysis now reports graph freshness diagnostics to warn when the graph is stale relative to the current Git HEAD, dirty state, or CLI flags.
 - `make security` target for running `govulncheck ./...`.
 
 ### Changed

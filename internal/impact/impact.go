@@ -44,16 +44,18 @@ type Options struct {
 
 // Repo represents a Git repository within the workspace.
 type Repo struct {
-	ID   string `json:"id"`
-	Root string `json:"root"`
+	ID               string                  `json:"id"`
+	Root             string                  `json:"root"`
+	AnalysisMetadata *graph.AnalysisMetadata `json:"-"`
 }
 
 // RepoReport summarizes the analysis status of a single repository.
 type RepoReport struct {
-	ID      string `json:"id"`
-	Root    string `json:"root"`
-	Scanned bool   `json:"scanned"`
-	Error   string `json:"error,omitempty"`
+	ID        string           `json:"id"`
+	Root      string           `json:"root"`
+	Scanned   bool             `json:"scanned"`
+	Error     string           `json:"error,omitempty"`
+	Freshness *FreshnessReport `json:"freshness,omitempty"`
 }
 
 // LineRange represents a start and end line number in a file.
@@ -164,6 +166,8 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 		i, repo := i, repo // capture for goroutine
 		eg.Go(func() error {
 			repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
+			freshness := evaluateFreshness(ctxGroup, runner, repo)
+			repoReport.Freshness = &freshness
 			files, err := changedFilesForRepo(ctxGroup, runner, repo, opts)
 
 			if err != nil {
@@ -173,6 +177,7 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 				return nil
 			}
 
+			applyChangedFileFreshness(&freshness, files)
 			repoReport.Scanned = true
 			repoReports[i] = repoReport
 			repoFiles[i] = files

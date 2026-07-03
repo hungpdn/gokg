@@ -29,6 +29,7 @@ func newImpactCommand() *cobra.Command {
 	cmd.Flags().Int("max-files", impact.DefaultMaxFiles, "Maximum changed files to analyze")
 	cmd.Flags().Bool("include-untracked", true, "Include untracked Git files")
 	cmd.Flags().Bool("tracked-only", false, "Analyze only tracked Git changes")
+	cmd.Flags().Bool("strict-stale", false, "Exit non-zero when graph freshness diagnostics report stale graph data")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 	return cmd
 }
@@ -43,6 +44,7 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 	maxFiles, _ := cmd.Flags().GetInt("max-files")
 	includeUntracked, _ := cmd.Flags().GetBool("include-untracked")
 	trackedOnly, _ := cmd.Flags().GetBool("tracked-only")
+	strictStale, _ := cmd.Flags().GetBool("strict-stale")
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if trackedOnly {
 		if cmd.Flags().Changed("include-untracked") && includeUntracked {
@@ -86,10 +88,16 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 	if jsonOutput {
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
+		if err := encoder.Encode(report); err != nil {
+			return err
+		}
+	} else if _, err = fmt.Fprint(out, impact.FormatMarkdown(report)); err != nil {
+		return err
 	}
-	_, err = fmt.Fprint(out, impact.FormatMarkdown(report))
-	return err
+	if strictStale && report.HasStaleFreshness() {
+		return fmt.Errorf("graph freshness is stale; run `gokg analyze --rebuild` before impact analysis")
+	}
+	return nil
 }
 
 func loadImpactGraph(ctx context.Context, cmd *cobra.Command, dbPath string, workspaceName string) (g *graph.Graph, repos []impact.Repo, err error) {
@@ -105,9 +113,9 @@ func loadImpactGraph(ctx context.Context, cmd *cobra.Command, dbPath string, wor
 		if err != nil {
 			return nil, nil, err
 		}
-		repos := make([]impact.Repo, 0, len(ws.Config.Repos))
-		for _, repo := range sortedWorkspaceRepos(ws) {
-			repos = append(repos, impact.Repo{ID: repo.ID, Root: repo.Path})
+		repos, err := workspaceImpactReposWithMetadata(ctx, ws)
+		if err != nil {
+			return nil, nil, err
 		}
 		return g, repos, nil
 	}
@@ -128,6 +136,9 @@ func loadImpactGraph(ctx context.Context, cmd *cobra.Command, dbPath string, wor
 	}
 	_, repo, err := resolveSingleGraphImpactRepo(g, ".", "")
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := attachAnalysisMetadata(ctx, store, &repo); err != nil {
 		return nil, nil, err
 	}
 	return g, []impact.Repo{repo}, nil

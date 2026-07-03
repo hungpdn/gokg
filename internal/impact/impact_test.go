@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
@@ -217,6 +218,90 @@ diff --git a/b.go b/b.go
 	require.Len(t, report.ChangedFiles, 1)
 	assert.Equal(t, "a.go", report.ChangedFiles[0].Path)
 	assert.Contains(t, strings.Join(report.Warnings, "\n"), "changed files truncated at max_files=1")
+}
+
+func TestAnalyzeReportsStaleGraphFreshnessWhenHeadChanges(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	g := graph.NewGraph(nil)
+	analyzedHead := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	currentHead := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	runner := fakeRunner{
+		responses: map[string]string{
+			fakeCommandKey(root, "git", "rev-parse", "--show-toplevel"):                                          root + "\n",
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "HEAD^{commit}"):                                currentHead + "\n",
+			fakeCommandKey(root, "git", "symbolic-ref", "--quiet", "--short", "HEAD"):                            "main\n",
+			fakeCommandKey(root, "git", "status", "--porcelain=v1", "-z"):                                        "",
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):            currentHead + "\n",
+			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", currentHead, "--"): "",
+		},
+	}
+
+	report, err := AnalyzeWithRunner(ctx, g, []Repo{{
+		ID:   "repo-a",
+		Root: root,
+		AnalysisMetadata: &graph.AnalysisMetadata{
+			SchemaVersion: graph.AnalysisMetadataSchemaVersion,
+			AnalyzedAt:    time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC),
+			RepoID:        "repo-a",
+			RepoRoot:      root,
+			IncludeTests:  true,
+			GitAvailable:  true,
+			GitRoot:       root,
+			GitHead:       analyzedHead,
+			GitBranch:     "main",
+			GoKGVersion:   "test",
+			ModulePrefix:  "pkg",
+			WorkspaceName: "",
+		},
+	}}, Options{MaxDepth: 1, MaxNodes: 100}, runner)
+	require.NoError(t, err)
+	require.Len(t, report.Repos, 1)
+	require.NotNil(t, report.Repos[0].Freshness)
+	assert.Equal(t, FreshnessStale, report.Repos[0].Freshness.Status)
+	assert.True(t, report.HasStaleFreshness())
+	assert.Contains(t, strings.Join(report.Repos[0].Freshness.Reasons, "\n"), "differs from current HEAD")
+}
+
+func TestAnalyzeMarksTestFileChangesStaleWhenTestsWereExcluded(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	g := graph.NewGraph(nil)
+	head := "cccccccccccccccccccccccccccccccccccccccc"
+	diff := `diff --git a/app_test.go b/app_test.go
+--- a/app_test.go
++++ b/app_test.go
+@@ -1 +1 @@
++changed
+`
+	runner := fakeRunner{
+		responses: map[string]string{
+			fakeCommandKey(root, "git", "rev-parse", "--show-toplevel"):                                   root + "\n",
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "HEAD^{commit}"):                         head + "\n",
+			fakeCommandKey(root, "git", "symbolic-ref", "--quiet", "--short", "HEAD"):                     "main\n",
+			fakeCommandKey(root, "git", "status", "--porcelain=v1", "-z"):                                 "",
+			fakeCommandKey(root, "git", "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"):     head + "\n",
+			fakeCommandKey(root, "git", "diff", "--unified=0", "--no-ext-diff", "--no-color", head, "--"): diff,
+		},
+	}
+
+	report, err := AnalyzeWithRunner(ctx, g, []Repo{{
+		ID:   "repo-a",
+		Root: root,
+		AnalysisMetadata: &graph.AnalysisMetadata{
+			SchemaVersion: graph.AnalysisMetadataSchemaVersion,
+			AnalyzedAt:    time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC),
+			RepoID:        "repo-a",
+			RepoRoot:      root,
+			GitAvailable:  true,
+			GitRoot:       root,
+			GitHead:       head,
+		},
+	}}, Options{MaxDepth: 1, MaxNodes: 100}, runner)
+	require.NoError(t, err)
+	require.NotNil(t, report.Repos[0].Freshness)
+	assert.Equal(t, FreshnessStale, report.Repos[0].Freshness.Status)
+	assert.Contains(t, strings.Join(report.Repos[0].Freshness.Reasons, "\n"), "--tests=false")
 }
 
 func TestChangedFilesForRepoVerifiesBaseRef(t *testing.T) {

@@ -15,11 +15,14 @@ func FormatMarkdown(report *Report) string {
 	}
 
 	fmt.Fprintf(&b, "- Base ref: %s\n", markdownInlineCode(report.BaseRef))
+	fmt.Fprintf(&b, "- Graph freshness: **%s**\n", report.GraphFreshnessStatus())
 	fmt.Fprintf(&b, "- Repositories scanned: **%d**\n", scannedRepoCount(report))
 	fmt.Fprintf(&b, "- Changed files: **%d**\n", len(report.ChangedFiles))
 	fmt.Fprintf(&b, "- Changed nodes: **%d**\n", len(report.ChangedNodes))
 	fmt.Fprintf(&b, "- Impacted nodes: **%d**\n", len(report.ImpactedNodes))
 	fmt.Fprintf(&b, "- Warnings: **%d**\n", len(report.Warnings))
+
+	writeFreshness(&b, report.Repos)
 
 	if len(report.ChangedFiles) == 0 {
 		b.WriteString("\nNo changes detected.\n")
@@ -81,6 +84,39 @@ func scannedRepoCount(report *Report) int {
 		}
 	}
 	return count
+}
+
+func writeFreshness(b *strings.Builder, repos []RepoReport) {
+	b.WriteString("\n### Graph Freshness\n\n")
+	if len(repos) == 0 {
+		b.WriteString("_No repository freshness information available._\n")
+		return
+	}
+	for _, repo := range repos {
+		label := repo.ID
+		if label == "" {
+			label = repo.Root
+		}
+		if repo.Freshness == nil {
+			fmt.Fprintf(b, "- Repo %s: **unknown**\n", markdownInlineCode(label))
+			continue
+		}
+		freshness := repo.Freshness
+		fmt.Fprintf(b, "- Repo %s: **%s**", markdownInlineCode(label), freshness.Status)
+		if freshness.AnalyzedAt != "" {
+			fmt.Fprintf(b, " analyzed at %s", markdownInlineCode(freshness.AnalyzedAt))
+		}
+		b.WriteByte('\n')
+		if freshness.AnalyzedHead != "" || freshness.CurrentHead != "" {
+			fmt.Fprintf(b, "  - HEAD: graph %s current %s\n", markdownInlineCode(shortCommit(freshness.AnalyzedHead)), markdownInlineCode(shortCommit(freshness.CurrentHead)))
+		}
+		if freshness.AnalyzedGitRoot != "" || freshness.CurrentGitRoot != "" {
+			fmt.Fprintf(b, "  - Git root: graph %s current %s\n", markdownInlineCode(freshness.AnalyzedGitRoot), markdownInlineCode(freshness.CurrentGitRoot))
+		}
+		for _, reason := range freshness.Reasons {
+			fmt.Fprintf(b, "  - %s\n", markdownText(reason))
+		}
+	}
 }
 
 func writeNodeSummaries(b *strings.Builder, nodes []NodeSummary) {

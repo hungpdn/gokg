@@ -54,9 +54,9 @@ var mcpCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			impactRepos := make([]impact.Repo, 0, len(repos))
-			for _, repo := range repos {
-				impactRepos = append(impactRepos, impact.Repo{ID: repo.ID, Root: repo.Path})
+			impactRepos, err := workspaceImpactReposWithMetadata(ctx, ws)
+			if err != nil {
+				return err
 			}
 
 			if enableWatch {
@@ -118,6 +118,13 @@ var mcpCmd = &cobra.Command{
 			}
 			return fmt.Errorf("failed to load graph from storage: %w", err)
 		}
+		analysisMeta, hasAnalysisMeta, err := graph.LoadAnalysisMetadata(ctx, store)
+		if err != nil {
+			if closeErr := store.Close(); closeErr != nil {
+				return fmt.Errorf("failed to load graph metadata: %w; additionally failed to close storage: %v", err, closeErr)
+			}
+			return err
+		}
 		if err := store.Close(); err != nil {
 			return err
 		}
@@ -126,6 +133,9 @@ var mcpCmd = &cobra.Command{
 		analysisRoot, impactRepo, err := resolveSingleGraphImpactRepo(g, ".", modulePrefix)
 		if err != nil {
 			return err
+		}
+		if hasAnalysisMeta {
+			impactRepo.AnalysisMetadata = &analysisMeta
 		}
 		// Detect module automatically if not provided.
 		if modulePrefix == "" {

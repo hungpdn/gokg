@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,36 @@ func TestAnalyzeTestsFlagDefaultsToFalse(t *testing.T) {
 
 	require.NotNil(t, flag)
 	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestAnalyzeWritesAnalysisMetadata(t *testing.T) {
+	withGoBuildCache(t)
+	projectDir := newTinyGoProject(t)
+	dbDir := filepath.Join(t.TempDir(), "custom-db")
+
+	withWorkingDir(t, projectDir)
+
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--db", dbDir, "--gc=false"})
+	require.NoError(t, cmd.Execute())
+
+	store, err := storage.NewBadgerStorageReadOnly(dbDir)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	meta, ok, err := graph.LoadAnalysisMetadata(context.Background(), store)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "example.com/tiny", meta.RepoID)
+	assert.Equal(t, "example.com/tiny", meta.ModulePrefix)
+	wantRoot := projectDir
+	if resolved, err := filepath.EvalSymlinks(projectDir); err == nil {
+		wantRoot = resolved
+	}
+	assert.Equal(t, filepath.Clean(wantRoot), meta.RepoRoot)
+	assert.False(t, meta.IncludeTests)
+	assert.False(t, meta.AnalyzedAt.IsZero())
 }
 
 func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
