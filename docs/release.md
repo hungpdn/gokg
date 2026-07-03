@@ -13,31 +13,25 @@ Use this checklist for tagged GoKG releases.
 
    A fine-grained GitHub token needs `Contents: Read and write` access to the target tap or bucket repository. The same token can be reused for both secrets if it has access to both repositories.
 
-4. Run tests:
+4. Run the full local quality gate:
 
    ```bash
-   go test ./...
+   RUN_RACE=1 RUN_LINT=1 RUN_VULN=1 SMOKE_TESTS=1 ./scripts/check.sh
    ```
 
-5. Check for reachable vulnerabilities:
-
-   ```bash
-   govulncheck ./...
-   ```
-
-6. Run the self-analysis baseline:
+5. Run the self-analysis baseline:
 
    ```bash
    gokg analyze --db /tmp/gokg-public-baseline --rebuild --tests
    ```
 
-7. Validate GoReleaser configuration:
+6. Validate GoReleaser configuration:
 
    ```bash
    goreleaser check
    ```
 
-8. Optionally run a local snapshot release:
+7. Optionally run a local snapshot release:
 
    ```bash
    goreleaser release --snapshot --clean --skip=publish
