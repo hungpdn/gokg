@@ -25,6 +25,11 @@ func newAnalysisMetadata(
 	} else {
 		root = filepath.Clean(repoRoot)
 	}
+	// Resolve symlinks and 8.3 short paths (Windows) so the stored root
+	// always uses the canonical long path form.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = filepath.Clean(resolved)
+	}
 
 	meta := graph.AnalysisMetadata{
 		SchemaVersion: graph.AnalysisMetadataSchemaVersion,

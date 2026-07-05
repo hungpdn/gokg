@@ -12,7 +12,13 @@ import (
 )
 
 func TestCaptureReadsGitState(t *testing.T) {
-	root := filepath.Clean("/repo")
+	// Use filepath.Abs to compute the canonical root the same way Capture does
+	// internally. On Windows, filepath.Clean("/repo") produces \repo (no drive),
+	// while filepath.Abs resolves it to the current drive (e.g. D:\repo).
+	rawRoot := "/repo"
+	root, err := filepath.Abs(rawRoot)
+	require.NoError(t, err)
+	root = filepath.Clean(root)
 	runner := fakeRunner{
 		responses: map[string]string{
 			fakeKey(root, "git", "rev-parse", "--show-toplevel"):               root + "\n",
