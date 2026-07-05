@@ -19,7 +19,7 @@ func newAnalysisMetadata(
 	workspaceName string,
 	includeTests bool,
 ) graph.AnalysisMetadata {
-	root := repoRoot
+	root := ""
 	if abs, err := filepath.Abs(repoRoot); err == nil {
 		root = filepath.Clean(abs)
 	} else {
