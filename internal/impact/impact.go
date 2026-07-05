@@ -166,19 +166,35 @@ func AnalyzeWithRunner(ctx context.Context, g *graph.Graph, repos []Repo, opts O
 	for i, repo := range repos {
 		i, repo := i, repo // capture for goroutine
 		eg.Go(func() error {
-			repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
-			freshness := evaluateFreshness(ctxGroup, runner, repo)
-			repoReport.Freshness = &freshness
-			files, err := changedFilesForRepo(ctxGroup, runner, repo, opts)
+			pathCache := make(map[string]string)
+			var freshness FreshnessReport
+			var files []ChangedFile
+			var diffErr error
 
-			if err != nil {
-				repoReport.Error = err.Error()
-				repoWarnings[i] = []string{fmt.Sprintf("repo %q: %v", repo.ID, err)}
+			var repoEg errgroup.Group
+			repoEg.Go(func() error {
+				freshness = evaluateFreshness(ctxGroup, runner, repo, pathCache)
+				return nil
+			})
+			repoEg.Go(func() error {
+				files, diffErr = changedFilesForRepo(ctxGroup, runner, repo, opts)
+				return diffErr
+			})
+
+			_ = repoEg.Wait()
+
+			repoReport := RepoReport{ID: repo.ID, Root: repo.Root}
+			f := freshness // explicitly copy the report
+			repoReport.Freshness = &f
+
+			if diffErr != nil {
+				repoReport.Error = diffErr.Error()
+				repoWarnings[i] = []string{fmt.Sprintf("repo %q: %v", repo.ID, diffErr)}
 				repoReports[i] = repoReport
 				return nil
 			}
 
-			applyChangedFileFreshness(&freshness, files)
+			applyChangedFileFreshness(&f, files)
 			repoReport.Scanned = true
 			repoReports[i] = repoReport
 			repoFiles[i] = files
@@ -277,7 +293,7 @@ func ValidateOptions(opts Options) error {
 	return nil
 }
 
-var baseRefRegexp = regexp.MustCompile(`^[a-zA-Z0-9_/.^~-]+$`)
+var baseRefRegexp = regexp.MustCompile(`^[a-zA-Z0-9_/.^~@-]+$`)
 
 func validateBaseRef(baseRef string) error {
 	baseRef = strings.TrimSpace(baseRef)
@@ -500,8 +516,10 @@ func ParseUntracked(repo Repo, r io.Reader) ([]ChangedFile, error) {
 		return nil, err
 	}
 	var files []ChangedFile
-	parts := bytes.Split(data, []byte{0})
-	if !bytes.Contains(data, []byte{0}) {
+	var parts [][]byte
+	if bytes.Contains(data, []byte{0}) {
+		parts = bytes.Split(data, []byte{0})
+	} else {
 		parts = bytes.Split(data, []byte{'\n'})
 	}
 	for _, rawPath := range parts {

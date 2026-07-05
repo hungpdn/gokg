@@ -359,7 +359,7 @@ func TestFreshnessPathCompareResolvesSymlinks(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	assert.True(t, samePath(target, link))
+	assert.True(t, samePath(target, link, make(map[string]string)))
 }
 
 func TestAnalyzeMarksTestFileChangesStaleWhenTestsWereExcluded(t *testing.T) {
