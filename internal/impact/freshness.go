@@ -33,7 +33,9 @@ type FreshnessReport struct {
 	RepoRootMatch        bool            `json:"repo_root_match"`
 	IncludeTests         bool            `json:"include_tests"`
 	GitDirtyAtAnalyze    bool            `json:"git_dirty_at_analyze"`
+	CurrentGitDirty      bool            `json:"current_git_dirty"`
 	GitStatusFingerprint string          `json:"git_status_fingerprint,omitempty"`
+	CurrentFingerprint   string          `json:"current_status_fingerprint,omitempty"`
 }
 
 func evaluateFreshness(ctx context.Context, runner CommandRunner, repo Repo) FreshnessReport {
@@ -45,6 +47,14 @@ func evaluateFreshness(ctx context.Context, runner CommandRunner, repo Repo) Fre
 	}
 
 	meta := repo.AnalysisMetadata
+	if repo.AnalysisMetadataLoader != nil {
+		loaded, err := repo.AnalysisMetadataLoader(ctx)
+		if err != nil {
+			report.Reasons = append(report.Reasons, "analysis metadata unavailable: "+err.Error())
+			return report
+		}
+		meta = loaded
+	}
 	if meta == nil {
 		report.Reasons = append(report.Reasons, "analysis metadata unavailable; run `gokg analyze --rebuild` to enable freshness diagnostics")
 		return report
@@ -55,9 +65,6 @@ func evaluateFreshness(ctx context.Context, runner CommandRunner, repo Repo) Fre
 	var staleReasons []string
 	if meta.SchemaVersion != graph.AnalysisMetadataSchemaVersion {
 		unknownReasons = append(unknownReasons, fmt.Sprintf("analysis metadata schema version %d is not supported", meta.SchemaVersion))
-	}
-	if meta.GitDirtyAtAnalyze {
-		unknownReasons = append(unknownReasons, "graph was analyzed while the working tree was dirty")
 	}
 	if !meta.GitAvailable {
 		if meta.GitError != "" {
@@ -82,6 +89,8 @@ func evaluateFreshness(ctx context.Context, runner CommandRunner, repo Repo) Fre
 	report.CurrentHead = snapshot.Head
 	report.CurrentGitRoot = snapshot.Root
 	report.CurrentBranch = snapshot.Branch
+	report.CurrentGitDirty = snapshot.Dirty
+	report.CurrentFingerprint = snapshot.StatusFingerprint
 
 	if meta.GitRoot != "" && snapshot.Root != "" && !samePath(meta.GitRoot, snapshot.Root) {
 		staleReasons = append(staleReasons, fmt.Sprintf("graph git root %q differs from current git root %q", meta.GitRoot, snapshot.Root))
@@ -91,6 +100,15 @@ func evaluateFreshness(ctx context.Context, runner CommandRunner, repo Repo) Fre
 	}
 	if meta.GitAvailable && meta.GitHead == "" {
 		unknownReasons = append(unknownReasons, "graph metadata did not record a git HEAD")
+	}
+	if meta.GitAvailable && meta.GitDirtyAtAnalyze != snapshot.Dirty {
+		staleReasons = append(staleReasons, fmt.Sprintf("graph dirty state %t differs from current dirty state %t", meta.GitDirtyAtAnalyze, snapshot.Dirty))
+	}
+	if meta.GitAvailable && meta.GitStatusFingerprint != snapshot.StatusFingerprint {
+		staleReasons = append(staleReasons, "graph working tree status differs from current status")
+	}
+	if meta.GitAvailable && meta.GitDirtyAtAnalyze && snapshot.Dirty && meta.GitStatusFingerprint == "" {
+		unknownReasons = append(unknownReasons, "graph metadata did not record a dirty working tree fingerprint")
 	}
 	if snapshot.Head == "" {
 		unknownReasons = append(unknownReasons, "current git HEAD is empty")
@@ -142,7 +160,25 @@ func markFreshnessStale(report *FreshnessReport, reason string) {
 }
 
 func samePath(a string, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
+	return comparableFreshnessPath(a) == comparableFreshnessPath(b)
+}
+
+func comparableFreshnessPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		cleaned = filepath.Clean(abs)
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent := filepath.Dir(cleaned)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(resolvedParent, filepath.Base(cleaned))
+	}
+	return cleaned
 }
 
 func shortCommit(commit string) string {
@@ -180,4 +216,8 @@ func (r *Report) GraphFreshnessStatus() FreshnessStatus {
 
 func (r *Report) HasStaleFreshness() bool {
 	return r.GraphFreshnessStatus() == FreshnessStale
+}
+
+func (r *Report) HasNonFreshFreshness() bool {
+	return r.GraphFreshnessStatus() != FreshnessFresh
 }

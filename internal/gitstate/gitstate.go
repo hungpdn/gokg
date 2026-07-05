@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,7 @@ func Capture(ctx context.Context, dir string, runner CommandRunner) (Snapshot, e
 		return Snapshot{}, fmt.Errorf("resolve git HEAD: %w", err)
 	}
 	branchOut, _ := runner.Run(ctx, dir, "git", "symbolic-ref", "--quiet", "--short", "HEAD")
-	statusOut, err := runner.Run(ctx, dir, "git", "status", "--porcelain=v1", "-z")
+	dirty, fingerprint, err := captureStatusFingerprint(ctx, dir, runner)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read git status: %w", err)
 	}
@@ -78,9 +79,53 @@ func Capture(ctx context.Context, dir string, runner CommandRunner) (Snapshot, e
 		Root:              root,
 		Head:              strings.TrimSpace(string(headOut)),
 		Branch:            strings.TrimSpace(string(branchOut)),
-		Dirty:             len(statusOut) > 0,
-		StatusFingerprint: statusFingerprint(statusOut),
+		Dirty:             dirty,
+		StatusFingerprint: fingerprint,
 	}, nil
+}
+
+func captureStatusFingerprint(ctx context.Context, dir string, runner CommandRunner) (bool, string, error) {
+	if _, ok := runner.(ExecRunner); ok {
+		return captureStatusFingerprintExec(ctx, dir)
+	}
+	statusOut, err := runner.Run(ctx, dir, "git", "status", "--porcelain=v1", "-z")
+	if err != nil {
+		return false, "", err
+	}
+	return len(statusOut) > 0, statusFingerprint(statusOut), nil
+}
+
+func captureStatusFingerprintExec(ctx context.Context, dir string) (bool, string, error) {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return false, "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return false, "", err
+	}
+
+	hasher := sha256.New()
+	written, copyErr := io.Copy(hasher, stdout)
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return false, "", copyErr
+	}
+	if waitErr != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return false, "", fmt.Errorf("git status --porcelain=v1 -z: %w: %s", waitErr, message)
+		}
+		return false, "", fmt.Errorf("git status --porcelain=v1 -z: %w", waitErr)
+	}
+	if written == 0 {
+		return false, "", nil
+	}
+	return true, hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func statusFingerprint(status []byte) string {

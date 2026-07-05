@@ -53,6 +53,29 @@ func attachAnalysisMetadata(ctx context.Context, store storage.Storage, repo *im
 	return nil
 }
 
+func attachAnalysisMetadataLoader(repo *impact.Repo, dbPath string) {
+	repo.AnalysisMetadataLoader = func(ctx context.Context) (meta *graph.AnalysisMetadata, err error) {
+		store, err := storage.NewBadgerStorageReadOnly(dbPath)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if closeErr := store.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}()
+
+		loaded, ok, err := graph.LoadAnalysisMetadata(ctx, store)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, nil
+		}
+		return &loaded, nil
+	}
+}
+
 func workspaceImpactReposWithMetadata(ctx context.Context, ws *workspace.Workspace) ([]impact.Repo, error) {
 	repos := make([]impact.Repo, 0, len(ws.Config.Repos))
 	for _, repo := range sortedWorkspaceRepos(ws) {
@@ -75,6 +98,14 @@ func workspaceImpactReposWithMetadata(ctx context.Context, ws *workspace.Workspa
 		repos = append(repos, impactRepo)
 	}
 	return repos, nil
+}
+
+func impactRepoPointersByID(repos []impact.Repo) map[string]*impact.Repo {
+	byID := make(map[string]*impact.Repo, len(repos))
+	for i := range repos {
+		byID[repos[i].ID] = &repos[i]
+	}
+	return byID
 }
 
 func formatRepositoryRootList(roots []graph.RepositoryRoot) string {

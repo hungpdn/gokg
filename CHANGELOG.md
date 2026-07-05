@@ -27,6 +27,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - Hardened impact `base_ref` validation against Git option injection and control characters.
 - Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
 - Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.
+- Impact freshness diagnostics now compare current dirty status fingerprints, resolve symlink-equivalent roots, and make strict mode reject unknown freshness.
 - Improved repo-aware file-range matching with normalized paths, symlink handling, and legacy blank `RepoID` compatibility.
 - Single-repo impact and MCP mode now infer the analyzed repo root from graph metadata when available, avoiding custom `--db` and current-working-directory mismatches.
 - Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.

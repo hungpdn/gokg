@@ -7,6 +7,7 @@ import (
 
 	"github.com/hungpdn/gokg/internal/gitstate"
 	"github.com/hungpdn/gokg/internal/graph"
+	"github.com/hungpdn/gokg/internal/storage"
 	"github.com/hungpdn/gokg/internal/version"
 )
 
@@ -48,4 +49,16 @@ func newAnalysisMetadata(
 	meta.GitDirtyAtAnalyze = snapshot.Dirty
 	meta.GitStatusFingerprint = snapshot.StatusFingerprint
 	return meta
+}
+
+func saveAnalysisMetadata(
+	ctx context.Context,
+	store storage.Storage,
+	repoID string,
+	repoRoot string,
+	modulePrefix string,
+	workspaceName string,
+	includeTests bool,
+) error {
+	return graph.SaveAnalysisMetadata(ctx, store, newAnalysisMetadata(ctx, repoID, repoRoot, modulePrefix, workspaceName, includeTests))
 }

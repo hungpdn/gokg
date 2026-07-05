@@ -58,8 +58,12 @@ var mcpCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			for i := range impactRepos {
+				attachAnalysisMetadataLoader(&impactRepos[i], ws.GetRepoDBPath(impactRepos[i].ID))
+			}
 
 			if enableWatch {
+				impactReposByID := impactRepoPointersByID(impactRepos)
 				for _, repo := range repos {
 					analysisRoot, err := resolveGoAnalysisRoot(repo.Path)
 					if err != nil {
@@ -70,7 +74,11 @@ var mcpCmd = &cobra.Command{
 					if repoModule == "" {
 						repoModule = repo.ID
 					}
-					p := parser.NewWorkspaceParser(repoModule, repo.ID, workspaceName)
+					includeTests := false
+					if impactRepo := impactReposByID[repo.ID]; impactRepo != nil && impactRepo.AnalysisMetadata != nil {
+						includeTests = impactRepo.AnalysisMetadata.IncludeTests
+					}
+					p := parser.NewWorkspaceParser(repoModule, repo.ID, workspaceName).WithTests(includeTests)
 					w, err := watcher.NewWatcher(g, p, analysisRoot.Dir)
 					if err != nil {
 						log.Printf("Warning: Failed to initialize watcher for repo %q: %v", repo.ID, err)
@@ -91,7 +99,10 @@ var mcpCmd = &cobra.Command{
 							}
 						}()
 
-						return update(ctx)
+						if err := update(ctx); err != nil {
+							return err
+						}
+						return saveAnalysisMetadata(ctx, store, repoID, analysisRoot.Dir, repoModule, workspaceName, includeTests)
 					})
 					if err := w.Start(ctx); err != nil {
 						log.Printf("Warning: Failed to start watcher for repo %q: %v", repo.ID, err)
@@ -137,6 +148,7 @@ var mcpCmd = &cobra.Command{
 		if hasAnalysisMeta {
 			impactRepo.AnalysisMetadata = &analysisMeta
 		}
+		attachAnalysisMetadataLoader(&impactRepo, dbPath)
 		// Detect module automatically if not provided.
 		if modulePrefix == "" {
 			modulePrefix = analysisRoot.ModulePrefix
@@ -149,7 +161,11 @@ var mcpCmd = &cobra.Command{
 		}
 
 		if enableWatch {
-			p := parser.NewParser(modulePrefix, modulePrefix)
+			includeTests := false
+			if impactRepo.AnalysisMetadata != nil {
+				includeTests = impactRepo.AnalysisMetadata.IncludeTests
+			}
+			p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
 			w, err := watcher.NewWatcher(g, p, analysisRoot.Dir)
 			if err != nil {
 				log.Printf("Warning: Failed to initialize file watcher: %v", err)
@@ -167,7 +183,10 @@ var mcpCmd = &cobra.Command{
 						}
 					}()
 
-					return update(ctx)
+					if err := update(ctx); err != nil {
+						return err
+					}
+					return saveAnalysisMetadata(ctx, store, impactRepo.ID, analysisRoot.Dir, modulePrefix, "", includeTests)
 				})
 				if err := w.Start(ctx); err != nil {
 					log.Printf("Warning: Failed to start file watcher: %v", err)

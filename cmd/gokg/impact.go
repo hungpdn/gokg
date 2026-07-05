@@ -29,7 +29,7 @@ func newImpactCommand() *cobra.Command {
 	cmd.Flags().Int("max-files", impact.DefaultMaxFiles, "Maximum changed files to analyze")
 	cmd.Flags().Bool("include-untracked", true, "Include untracked Git files")
 	cmd.Flags().Bool("tracked-only", false, "Analyze only tracked Git changes")
-	cmd.Flags().Bool("strict-stale", false, "Exit non-zero when graph freshness diagnostics report stale graph data")
+	cmd.Flags().Bool("strict-stale", false, "Exit non-zero unless graph freshness diagnostics report fresh graph data")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 	return cmd
 }
@@ -94,8 +94,8 @@ func runImpact(cmd *cobra.Command, args []string) (err error) {
 	} else if _, err = fmt.Fprint(out, impact.FormatMarkdown(report)); err != nil {
 		return err
 	}
-	if strictStale && report.HasStaleFreshness() {
-		return fmt.Errorf("graph freshness is stale; run `gokg analyze --rebuild` before impact analysis")
+	if strictStale && report.HasNonFreshFreshness() {
+		return fmt.Errorf("graph freshness is %s; run `gokg analyze --rebuild` before impact analysis", report.GraphFreshnessStatus())
 	}
 	return nil
 }

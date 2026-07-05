@@ -44,9 +44,10 @@ type Options struct {
 
 // Repo represents a Git repository within the workspace.
 type Repo struct {
-	ID               string                  `json:"id"`
-	Root             string                  `json:"root"`
-	AnalysisMetadata *graph.AnalysisMetadata `json:"-"`
+	ID                     string                                                 `json:"id"`
+	Root                   string                                                 `json:"root"`
+	AnalysisMetadata       *graph.AnalysisMetadata                                `json:"-"`
+	AnalysisMetadataLoader func(context.Context) (*graph.AnalysisMetadata, error) `json:"-"`
 }
 
 // RepoReport summarizes the analysis status of a single repository.

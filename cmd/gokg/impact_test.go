@@ -161,7 +161,32 @@ func TestImpactStrictStaleReturnsErrorAfterWritingReport(t *testing.T) {
 	assert.Contains(t, stdout.String(), "differs from current HEAD")
 }
 
+func TestImpactStrictStaleRejectsUnknownFreshness(t *testing.T) {
+	repoDir, dbDir := newImpactGitRepoAndDBWithoutMetadata(t, false)
+	withWorkingDir(t, repoDir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newImpactCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--db", dbDir, "--strict-stale"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "graph freshness is unknown")
+	assert.Contains(t, stdout.String(), "Graph freshness: **unknown**")
+}
+
 func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
+	return newImpactGitRepoAndDBWithMetadata(t, modify, true)
+}
+
+func newImpactGitRepoAndDBWithoutMetadata(t *testing.T, modify bool) (string, string) {
+	return newImpactGitRepoAndDBWithMetadata(t, modify, false)
+}
+
+func newImpactGitRepoAndDBWithMetadata(t *testing.T, modify bool, writeMetadata bool) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is required for impact CLI tests")
@@ -192,20 +217,22 @@ func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
 			{From: "example.com/impact.Caller", To: "example.com/impact.Changed", Type: parser.EdgeTypeCalls, RepoID: "example.com/impact"},
 		},
 	}))
-	require.NoError(t, graph.SaveAnalysisMetadata(context.Background(), store, graph.AnalysisMetadata{
-		SchemaVersion:     graph.AnalysisMetadataSchemaVersion,
-		GoKGVersion:       "test",
-		AnalyzedAt:        time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC),
-		RepoID:            "example.com/impact",
-		RepoRoot:          repoDir,
-		ModulePrefix:      "example.com/impact",
-		IncludeTests:      false,
-		GitAvailable:      true,
-		GitRoot:           repoDir,
-		GitHead:           head,
-		GitBranch:         "master",
-		GitDirtyAtAnalyze: false,
-	}))
+	if writeMetadata {
+		require.NoError(t, graph.SaveAnalysisMetadata(context.Background(), store, graph.AnalysisMetadata{
+			SchemaVersion:     graph.AnalysisMetadataSchemaVersion,
+			GoKGVersion:       "test",
+			AnalyzedAt:        time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC),
+			RepoID:            "example.com/impact",
+			RepoRoot:          repoDir,
+			ModulePrefix:      "example.com/impact",
+			IncludeTests:      false,
+			GitAvailable:      true,
+			GitRoot:           repoDir,
+			GitHead:           head,
+			GitBranch:         "master",
+			GitDirtyAtAnalyze: false,
+		}))
+	}
 	require.NoError(t, store.Close())
 
 	if modify {
