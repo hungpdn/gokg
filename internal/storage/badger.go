@@ -111,7 +111,7 @@ func (b *badgerStorage) Get(ctx context.Context, key []byte) ([]byte, error) {
 	})
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
-			return nil, fmt.Errorf("key not found")
+			return nil, ErrKeyNotFound
 		}
 		return nil, fmt.Errorf("failed to get key: %w", err)
 	}

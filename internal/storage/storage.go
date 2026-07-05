@@ -1,6 +1,11 @@
 package storage
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrKeyNotFound = errors.New("key not found")
 
 // Storage defines the interface for local database operations.
 type Storage interface {

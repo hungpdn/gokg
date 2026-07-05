@@ -76,6 +76,15 @@ func runAnalyze(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
+	modulePrefix, _ := cmd.Flags().GetString("module")
+	if modulePrefix == "" {
+		modulePrefix = analysisRoot.ModulePrefix
+		if modulePrefix == "" {
+			modulePrefix = "gokg"
+		}
+	}
+	analysisMeta := newAnalysisMetadata(ctx, modulePrefix, analysisRoot.Dir, modulePrefix, "", includeTests)
+
 	// Init Storage
 	store, err := storage.NewBadgerStorage(dbPath)
 	if err != nil {
@@ -86,14 +95,6 @@ func runAnalyze(cmd *cobra.Command, args []string) (err error) {
 			err = closeErr
 		}
 	}()
-
-	modulePrefix, _ := cmd.Flags().GetString("module")
-	if modulePrefix == "" {
-		modulePrefix = analysisRoot.ModulePrefix
-		if modulePrefix == "" {
-			modulePrefix = "gokg"
-		}
-	}
 
 	// Parse Workspace
 	p := parser.NewParser(modulePrefix, modulePrefix).WithTests(includeTests)
@@ -111,6 +112,9 @@ func runAnalyze(cmd *cobra.Command, args []string) (err error) {
 	g := graph.NewGraph(store)
 	if err := g.BuildFromParseResult(ctx, result); err != nil {
 		return fmt.Errorf("graph construction failed: %w", err)
+	}
+	if err := graph.SaveAnalysisMetadata(ctx, store, analysisMeta); err != nil {
+		return err
 	}
 
 	if runGC {
@@ -227,6 +231,12 @@ func analyzeWorkspaceRepo(
 		}
 	}
 
+	modulePrefix := analysisRoot.ModulePrefix
+	if modulePrefix == "" {
+		modulePrefix = repo.ID
+	}
+	analysisMeta := newAnalysisMetadata(ctx, repo.ID, analysisRoot.Dir, modulePrefix, ws.Name, includeTests)
+
 	store, err := storage.NewBadgerStorage(dbPath)
 	if err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("failed to open storage for repo %q: %w", repo.ID, err)
@@ -237,11 +247,6 @@ func analyzeWorkspaceRepo(
 		}
 	}()
 
-	modulePrefix := analysisRoot.ModulePrefix
-	if modulePrefix == "" {
-		modulePrefix = repo.ID
-	}
-
 	p := parser.NewWorkspaceParser(modulePrefix, repo.ID, ws.Name).WithTests(includeTests)
 	parseResult, err := p.ParseWorkspace(ctx, analysisRoot.Dir)
 	if err != nil {
@@ -251,6 +256,9 @@ func analyzeWorkspaceRepo(
 	g := graph.NewGraph(store)
 	if err := g.BuildFromParseResult(ctx, parseResult); err != nil {
 		return workspaceAnalysisResult{}, fmt.Errorf("graph construction for repo %q failed: %w", repo.ID, err)
+	}
+	if err := graph.SaveAnalysisMetadata(ctx, store, analysisMeta); err != nil {
+		return workspaceAnalysisResult{}, fmt.Errorf("save analysis metadata for repo %q: %w", repo.ID, err)
 	}
 
 	if runGC {

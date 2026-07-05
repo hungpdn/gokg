@@ -11,6 +11,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
 - `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
 - Graph query support for mapping changed file ranges to graph nodes and bounded inbound dependency blast-radius traversal.
+- Impact analysis now reports graph freshness diagnostics to warn when the graph is stale relative to the current Git HEAD, dirty state, or CLI flags.
 - `make security` target for running `govulncheck ./...`.
 
 ### Changed
@@ -26,6 +27,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - Hardened impact `base_ref` validation against Git option injection and control characters.
 - Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
 - Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.
+- Impact freshness diagnostics now compare current dirty status fingerprints, resolve symlink-equivalent roots, and make strict mode reject unknown freshness.
 - Improved repo-aware file-range matching with normalized paths, symlink handling, and legacy blank `RepoID` compatibility.
 - Single-repo impact and MCP mode now infer the analyzed repo root from graph metadata when available, avoiding custom `--db` and current-working-directory mismatches.
 - Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.

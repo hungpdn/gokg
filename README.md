@@ -201,11 +201,14 @@ gokg impact --tracked-only
 # Machine-readable report
 gokg impact --json
 
+# Fail CI unless graph freshness is fresh
+gokg impact --strict-stale
+
 # Workspace impact grouped by repo
 gokg impact --workspace my-platform --base main
 ```
 
-`gokg impact` reads existing graph databases; run `gokg analyze --rebuild` first when the graph is stale. It maps changed Git hunks to graph nodes, reports changed nodes, and lists dependency nodes that depend on them. Use `--max-files` and `--max-nodes` to cap large reports.
+`gokg analyze` stores graph snapshot metadata such as analyzed time, repo root, module prefix, Git root, Git HEAD, dirty state, and whether `_test.go` files were included. `gokg impact` reads that metadata and reports graph freshness as `fresh`, `stale`, or `unknown` before listing changed and impacted nodes. Use `--strict-stale` in CI to exit non-zero unless freshness is `fresh`. Use `--max-files` and `--max-nodes` to cap large reports.
 
 ### 7. Multi-Repo Workspaces
 

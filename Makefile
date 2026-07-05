@@ -1,4 +1,4 @@
-.PHONY: all build build-debug test clean format install install-tools lint security
+.PHONY: all build build-debug test check clean format install install-tools lint security
 
 BINARY_NAME ?= gokg
 GO ?= go
@@ -20,6 +20,9 @@ build-debug:
 
 test:
 	$(GO) test -v ./...
+
+check:
+	./scripts/check.sh
 
 test-race:
 	$(GO) test -v -race ./...

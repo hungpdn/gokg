@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
@@ -136,7 +138,55 @@ func TestImpactWorkspaceRejectsDBFlag(t *testing.T) {
 	assert.Contains(t, err.Error(), "--db cannot be used with --workspace")
 }
 
+func TestImpactStrictStaleReturnsErrorAfterWritingReport(t *testing.T) {
+	repoDir, dbDir := newImpactGitRepoAndDB(t, false)
+	withWorkingDir(t, repoDir)
+
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "app.go"), []byte("package impact\n\nfunc Changed() int {\n\treturn 3\n}\n\nfunc Caller() int {\n\treturn Changed()\n}\n"), 0o644))
+	runGit(t, repoDir, "add", ".")
+	runGit(t, repoDir, "commit", "-m", "second")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "app.go"), []byte("package impact\n\nfunc Changed() int {\n\treturn 4\n}\n\nfunc Caller() int {\n\treturn Changed()\n}\n"), 0o644))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newImpactCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--db", dbDir, "--strict-stale"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "graph freshness is stale")
+	assert.Contains(t, stdout.String(), "Graph freshness: **stale**")
+	assert.Contains(t, stdout.String(), "differs from current HEAD")
+}
+
+func TestImpactStrictStaleRejectsUnknownFreshness(t *testing.T) {
+	repoDir, dbDir := newImpactGitRepoAndDBWithoutMetadata(t, false)
+	withWorkingDir(t, repoDir)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := newImpactCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--db", dbDir, "--strict-stale"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "graph freshness is unknown")
+	assert.Contains(t, stdout.String(), "Graph freshness: **unknown**")
+}
+
 func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
+	return newImpactGitRepoAndDBWithMetadata(t, modify, true)
+}
+
+func newImpactGitRepoAndDBWithoutMetadata(t *testing.T, modify bool) (string, string) {
+	return newImpactGitRepoAndDBWithMetadata(t, modify, false)
+}
+
+func newImpactGitRepoAndDBWithMetadata(t *testing.T, modify bool, writeMetadata bool) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is required for impact CLI tests")
@@ -151,6 +201,7 @@ func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
 	runGit(t, repoDir, "config", "user.name", "Test User")
 	runGit(t, repoDir, "add", ".")
 	runGit(t, repoDir, "commit", "-m", "initial")
+	head := strings.TrimSpace(runGitOutput(t, repoDir, "rev-parse", "--verify", "HEAD^{commit}"))
 
 	dbDir := filepath.Join(t.TempDir(), "impact-db")
 	store, err := storage.NewBadgerStorage(dbDir)
@@ -166,6 +217,22 @@ func newImpactGitRepoAndDB(t *testing.T, modify bool) (string, string) {
 			{From: "example.com/impact.Caller", To: "example.com/impact.Changed", Type: parser.EdgeTypeCalls, RepoID: "example.com/impact"},
 		},
 	}))
+	if writeMetadata {
+		require.NoError(t, graph.SaveAnalysisMetadata(context.Background(), store, graph.AnalysisMetadata{
+			SchemaVersion:     graph.AnalysisMetadataSchemaVersion,
+			GoKGVersion:       "test",
+			AnalyzedAt:        time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC),
+			RepoID:            "example.com/impact",
+			RepoRoot:          repoDir,
+			ModulePrefix:      "example.com/impact",
+			IncludeTests:      false,
+			GitAvailable:      true,
+			GitRoot:           repoDir,
+			GitHead:           head,
+			GitBranch:         "master",
+			GitDirtyAtAnalyze: false,
+		}))
+	}
 	require.NoError(t, store.Close())
 
 	if modify {
@@ -180,4 +247,13 @@ func runGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return string(out)
 }
