@@ -8,6 +8,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Added
 
+- `get_node_context` MCP tool and graph query support for retrieving a node's full structural, source, dependency, dependent, routing, and concurrency context.
 - `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
 - `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
 - Graph query support for mapping changed file ranges to graph nodes and bounded inbound dependency blast-radius traversal.

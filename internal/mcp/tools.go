@@ -81,6 +81,36 @@ func (s *Server) toolDefinitions() []toolDefinition {
 			handler: (*Server).handleGetSourceCodeTool,
 		},
 		{
+			name:        "get_node_context",
+			description: "Returns source, dependencies, dependents, location, route, interface, and concurrency context for a graph node.",
+			inputSchema: objectSchema(map[string]interface{}{
+				"node_id": map[string]interface{}{"type": "string", "description": "Fully qualified node ID"},
+				"include_source": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include source code when line information is available. Defaults to true.",
+				},
+				"max_callers": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum dependent/caller nodes to return. Defaults to %d.", graph.NodeContextDefaultMaxCallers),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxCallers,
+				},
+				"max_dependencies": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum direct dependency relations to return. Defaults to %d.", graph.NodeContextDefaultMaxDependencies),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxDependencies,
+				},
+				"max_depth": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum inbound dependent depth. Defaults to %d.", graph.NodeContextDefaultMaxDepth),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxDepth,
+				},
+			}, "node_id"),
+			handler: (*Server).handleGetNodeContextTool,
+		},
+		{
 			name:        "get_repository_structure",
 			description: "Returns the repository folder/package/file structure from the knowledge graph, formatted as a Markdown tree",
 			inputSchema: objectSchema(map[string]interface{}{
@@ -274,6 +304,29 @@ func (s *Server) handleGetSourceCodeTool(ctx context.Context, id interface{}, ra
 		return s.errorResult(id, err)
 	}
 	return s.textResult(id, formatSourceCodeMarkdown(args.NodeID, code))
+}
+
+func (s *Server) handleGetNodeContextTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {
+	args, err := parseToolArgs[struct {
+		NodeID          string `json:"node_id"`
+		IncludeSource   *bool  `json:"include_source"`
+		MaxCallers      int    `json:"max_callers"`
+		MaxDependencies int    `json:"max_dependencies"`
+		MaxDepth        int    `json:"max_depth"`
+	}](raw)
+	if err != nil {
+		return s.errorResult(id, err)
+	}
+	nodeContext, err := s.graph.Query().GetNodeContext(args.NodeID, graph.NodeContextOptions{
+		IncludeSource:   args.IncludeSource,
+		MaxCallers:      args.MaxCallers,
+		MaxDependencies: args.MaxDependencies,
+		MaxDepth:        args.MaxDepth,
+	})
+	if err != nil {
+		return s.errorResult(id, err)
+	}
+	return s.textResult(id, formatNodeContextMarkdown(nodeContext))
 }
 
 func (s *Server) handleGetRepositoryStructureTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {

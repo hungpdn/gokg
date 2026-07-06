@@ -229,7 +229,7 @@ gokg workspace remove my-platform github.com/org/service-a
 
 ## MCP Tools for AI Agents
 
-When connected through `gokg mcp`, GoKG exposes 11 tools:
+When connected through `gokg mcp`, GoKG exposes 12 tools:
 
 | Tool | Description |
 |---|---|
@@ -239,11 +239,14 @@ When connected through `gokg mcp`, GoKG exposes 11 tools:
 | `get_concurrency_graph` | Goroutine/channel topology connected to a function |
 | `get_implementations` | Structs implementing a given interface |
 | `get_source_code` | Raw Go source for a node |
+| `get_node_context` | Source, dependencies, dependents, location, route, interface, and concurrency context for a node |
 | `get_repository_structure` | Repository folder/package/file tree from the graph |
 | `get_change_impact` | Git diff to changed graph nodes and dependency impact |
 | `find_path` | Shortest call path between two nodes |
 | `search_nodes` | Find nodes by name or ID substring |
 | `execute_cypher` | Run strict read-only Cypher queries against the graph |
+
+For impact-driven work, call `get_change_impact` first, then call `get_node_context` on changed or impacted node IDs before deciding what to edit or test.
 
 ---
 
