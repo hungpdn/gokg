@@ -91,6 +91,34 @@ func TestParseDiffHandlesLongLines(t *testing.T) {
 	assert.Equal(t, []LineRange{{Start: 1, End: 1}}, files[0].Ranges)
 }
 
+func TestParseDiffDecodesGitQuotedPaths(t *testing.T) {
+	repo := Repo{ID: "repo-a", Root: "/repo"}
+	diff := `diff --git "a/caf\303\251\tservice.go" "b/caf\303\251\tservice.go"
+index 111..222 100644
+--- "a/caf\303\251\tservice.go"
++++ "b/caf\303\251\tservice.go"
+@@ -1 +1 @@
+-old
++new
+diff --git "a/m\303\263de.go" "b/m\303\263de.go"
+old mode 100644
+new mode 100755
+diff --git a/dir b/mode.go b/dir b/mode.go
+old mode 100644
+new mode 100755
+`
+
+	files, err := ParseDiff(repo, strings.NewReader(diff))
+	require.NoError(t, err)
+	require.Len(t, files, 3)
+	assert.Equal(t, "café\tservice.go", files[0].Path)
+	assert.Equal(t, []LineRange{{Start: 1, End: 1}}, files[0].Ranges)
+	assert.Equal(t, "móde.go", files[1].Path)
+	assert.True(t, files[1].WholeFile)
+	assert.Equal(t, "dir b/mode.go", files[2].Path)
+	assert.True(t, files[2].WholeFile)
+}
+
 func TestParseUntrackedUsesNULAndPreservesWhitespace(t *testing.T) {
 	repo := Repo{ID: "repo-a", Root: "/repo"}
 

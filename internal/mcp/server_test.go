@@ -170,12 +170,13 @@ func TestHandleListTools(t *testing.T) {
 	assert.True(t, ok)
 	tools, ok := resultMap["tools"].([]map[string]interface{})
 	assert.True(t, ok)
-	assert.Len(t, tools, 11, "Should have 11 tools registered")
+	assert.Len(t, tools, 12, "Should have 12 tools registered")
 
 	// Verify new tools are present
 	toolNames := make(map[string]bool)
 	var cypherDescription string
 	var sourceDescription string
+	var nodeContextSchema map[string]interface{}
 	for _, tool := range tools {
 		name := tool["name"].(string)
 		toolNames[name] = true
@@ -185,9 +186,13 @@ func TestHandleListTools(t *testing.T) {
 		if name == "get_source_code" {
 			sourceDescription = tool["description"].(string)
 		}
+		if name == "get_node_context" {
+			nodeContextSchema = tool["inputSchema"].(map[string]interface{})
+		}
 	}
 	assert.True(t, toolNames["get_implementations"])
 	assert.True(t, toolNames["get_source_code"])
+	assert.True(t, toolNames["get_node_context"])
 	assert.True(t, toolNames["find_path"])
 	assert.True(t, toolNames["get_concurrency_graph"])
 	assert.True(t, toolNames["get_repository_structure"])
@@ -196,6 +201,12 @@ func TestHandleListTools(t *testing.T) {
 	assert.Contains(t, cypherDescription, "ROUTE")
 	assert.Contains(t, cypherDescription, "REGISTERS_ROUTE")
 	assert.Contains(t, sourceDescription, "route registration")
+	assert.Contains(t, nodeContextSchema["required"], "node_id")
+	nodeContextProperties := nodeContextSchema["properties"].(map[string]interface{})
+	assert.Contains(t, nodeContextProperties, "max_dependents")
+	assert.Contains(t, nodeContextProperties, "max_relations")
+	assert.Contains(t, nodeContextProperties, "max_source_lines")
+	assert.Contains(t, nodeContextProperties, "max_source_bytes")
 }
 
 func TestHandleCallToolError(t *testing.T) {
@@ -276,6 +287,102 @@ func TestHandleCallGetImplementations(t *testing.T) {
 
 	assert.Contains(t, text, "## Implementations of `pkg.MyInterface`")
 	assert.Contains(t, text, "**`MyStruct`**")
+}
+
+func TestHandleCallNodeContextMarkdown(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "service.go")
+	require.NoError(t, os.WriteFile(filePath, []byte("package pkg\n\nfunc Target() {\n\tDep()\n}\n"), 0o644))
+
+	for _, node := range []*parser.Node{
+		{ID: filePath, Type: parser.NodeTypeFile, Name: "service.go", PkgPath: "pkg", FilePath: filePath},
+		{ID: "pkg.Target", Type: parser.NodeTypeFunc, Name: "Target", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{3, 5}},
+		{ID: "pkg.Dep", Type: parser.NodeTypeFunc, Name: "Dep", PkgPath: "pkg"},
+		{ID: "pkg.Caller", Type: parser.NodeTypeFunc, Name: "Caller", PkgPath: "pkg"},
+	} {
+		requireAddNode(t, g, ctx, node)
+	}
+	requireAddEdge(t, g, ctx, &parser.Edge{From: filePath, To: "pkg.Target", Type: parser.EdgeTypeContains})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "pkg.Target", To: "pkg.Dep", Type: parser.EdgeTypeCalls})
+	requireAddEdge(t, g, ctx, &parser.Edge{From: "pkg.Caller", To: "pkg.Target", Type: parser.EdgeTypeCalls})
+
+	server := NewServer(g)
+	paramsRaw := []byte(`{"name": "get_node_context", "arguments": {"node_id": "pkg.Target"}}`)
+	req := &Request{JSONRPC: "2.0", ID: 14, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.Nil(t, res.Error)
+	text := responseText(t, res)
+
+	assert.Contains(t, text, "## Node Context")
+	assert.Contains(t, text, "### Node")
+	assert.Contains(t, text, "### Source")
+	assert.Contains(t, text, "### Dependencies")
+	assert.Contains(t, text, "### Dependents")
+	assert.Contains(t, text, "### Location")
+	assert.Contains(t, text, "### Routes")
+	assert.Contains(t, text, "### Interfaces")
+	assert.Contains(t, text, "### Concurrency")
+	assert.Contains(t, text, "### Warnings")
+	assert.Contains(t, text, "func Target()")
+	assert.Contains(t, text, "pkg.Dep")
+	assert.Contains(t, text, "pkg.Caller")
+}
+
+func TestHandleCallNodeContextCanOmitSource(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "pkg.Target", Type: parser.NodeTypeFunc, Name: "Target"})
+
+	server := NewServer(g)
+	paramsRaw := []byte(`{"name": "get_node_context", "arguments": {"node_id": "pkg.Target", "include_source": false}}`)
+	req := &Request{JSONRPC: "2.0", ID: 15, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.Nil(t, res.Error)
+	text := responseText(t, res)
+
+	assert.Contains(t, text, "_Source not requested._")
+	assert.NotContains(t, text, "source unavailable")
+}
+
+func TestHandleCallNodeContextRejectsUnsafeLimits(t *testing.T) {
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "pkg.Target", Type: parser.NodeTypeFunc, Name: "Target"})
+	server := NewServer(g)
+
+	for _, paramsRaw := range [][]byte{
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_depth":4}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_callers":-1}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_dependents":0}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_dependencies":101}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_relations":0}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_source_lines":0}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_source_bytes":0}}`),
+	} {
+		req := &Request{JSONRPC: "2.0", ID: 16, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+		res := server.handleRequest(req)
+		require.NotNil(t, res)
+		require.NotNil(t, res.Error)
+		assert.Contains(t, res.Error.Message, "must be between")
+	}
+}
+
+func TestHandleCallNodeContextUnknownNode(t *testing.T) {
+	g := graph.NewGraph(nil)
+	server := NewServer(g)
+	paramsRaw := []byte(`{"name": "get_node_context", "arguments": {"node_id": "missing"}}`)
+	req := &Request{JSONRPC: "2.0", ID: 17, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Contains(t, res.Error.Message, "node not found: missing")
 }
 
 func TestHandleCallFindPath(t *testing.T) {
@@ -453,6 +560,18 @@ func runMCPGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
+}
+
+func responseText(t *testing.T, res *Response) string {
+	t.Helper()
+	resultMap, ok := res.Result.(map[string]interface{})
+	require.True(t, ok)
+	content, ok := resultMap["content"].([]map[string]interface{})
+	require.True(t, ok)
+	require.NotEmpty(t, content)
+	text, ok := content[0]["text"].(string)
+	require.True(t, ok)
+	return text
 }
 
 func TestHandleCallRepositoryStructureRejectsUnsafeLimits(t *testing.T) {

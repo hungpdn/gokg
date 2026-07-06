@@ -96,6 +96,11 @@ func TestNodesForFileRangesAndBlastRadiusDepth(t *testing.T) {
 	assert.Equal(t, "pkg.Direct", depthOne[0].Node.ID)
 	assert.Equal(t, 1, depthOne[0].Distance)
 
+	exactlyCapped, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 1, 1)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, exactlyCapped, 1)
+
 	depthTwo, truncated, err := g.Query().GetBlastRadiusDepth([]string{"pkg.Changed"}, 2, 10)
 	require.NoError(t, err)
 	assert.False(t, truncated)

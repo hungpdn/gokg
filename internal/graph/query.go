@@ -240,14 +240,13 @@ func (qb *QueryBuilder) GetBlastRadiusDepth(nodeIDs []string, maxDepth int, maxN
 			if prevDistance, ok := seen[fromID]; ok && prevDistance <= nextDistance {
 				continue
 			}
+			if maxNodes > 0 && len(resultsByID) >= maxNodes {
+				return sortedNodeDistances(resultsByID), true, nil
+			}
 			seen[fromID] = nextDistance
 			nd := NodeDistance{Node: qb.g.nodes[fromID], Distance: nextDistance}
 			resultsByID[fromID] = nd
 			queue = append(queue, nd)
-			if maxNodes > 0 && len(resultsByID) >= maxNodes {
-				truncated = true
-				return sortedNodeDistances(resultsByID), truncated, nil
-			}
 		}
 	}
 

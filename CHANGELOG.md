@@ -8,6 +8,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Added
 
+- `get_node_context` MCP tool and graph query support for retrieving a node's full structural, source, dependency, dependent, routing, and concurrency context.
 - `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
 - `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
 - Graph query support for mapping changed file ranges to graph nodes and bounded inbound dependency blast-radius traversal.
@@ -16,6 +17,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Changed
 
+- `get_node_context` now bounds dependent, relation, source-line, and source-byte payloads and exposes `max_dependents`, `max_relations`, `max_source_lines`, and `max_source_bytes` controls.
 - MCP tool handling is split into dedicated tool definitions and handlers.
 - MCP HTTP and stdio request contexts now propagate into long-running tool calls such as change impact analysis.
 - Change impact analysis now includes untracked Git files by default, with `--tracked-only` available for tracked-only reports.
@@ -24,14 +26,17 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Fixed
 
+- `get_node_context` now truncates oversized source and relationship sections with warnings instead of returning unbounded MCP responses.
 - Hardened impact `base_ref` validation against Git option injection and control characters.
 - Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
-- Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.
+- Impact diff and untracked-file parsing now handle long generated lines, Git-quoted tracked paths, and NUL-separated untracked file names.
+- Blast-radius and node-context queries now report truncation only when results actually exceed their configured limit.
 - Impact freshness diagnostics now compare current dirty status fingerprints, resolve symlink-equivalent roots, and make strict mode reject unknown freshness.
 - Improved repo-aware file-range matching with normalized paths, symlink handling, and legacy blank `RepoID` compatibility.
 - Single-repo impact and MCP mode now infer the analyzed repo root from graph metadata when available, avoiding custom `--db` and current-working-directory mismatches.
 - Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.
 - Impact Markdown output now escapes inline values such as repo IDs, node names, file paths, and base refs.
+- GoReleaser now marks semantic-version prerelease tags as GitHub prereleases automatically.
 
 ## [v0.1.0-alpha.4] - 2026-06-26
 
