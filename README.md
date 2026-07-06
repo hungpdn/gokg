@@ -239,14 +239,14 @@ When connected through `gokg mcp`, GoKG exposes 12 tools:
 | `get_concurrency_graph` | Goroutine/channel topology connected to a function |
 | `get_implementations` | Structs implementing a given interface |
 | `get_source_code` | Raw Go source for a node |
-| `get_node_context` | Source, dependencies, dependents, location, route, interface, and concurrency context for a node |
+| `get_node_context` | Bounded source, dependency, dependent, location, route, interface, and concurrency context for a node |
 | `get_repository_structure` | Repository folder/package/file tree from the graph |
 | `get_change_impact` | Git diff to changed graph nodes and dependency impact |
 | `find_path` | Shortest call path between two nodes |
 | `search_nodes` | Find nodes by name or ID substring |
 | `execute_cypher` | Run strict read-only Cypher queries against the graph |
 
-For impact-driven work, call `get_change_impact` first, then call `get_node_context` on changed or impacted node IDs before deciding what to edit or test.
+For impact-driven work, call `get_change_impact` first, then call `get_node_context` on changed or impacted node IDs before deciding what to edit or test. `get_node_context` caps source, dependent, and relation payloads by default; tune `max_dependents`, `max_dependencies`, `max_relations`, `max_source_lines`, and `max_source_bytes` when a client needs more context. `max_callers` remains available as a deprecated alias for `max_dependents`.
 
 ---
 

@@ -89,9 +89,15 @@ func (s *Server) toolDefinitions() []toolDefinition {
 					"type":        "boolean",
 					"description": "Include source code when line information is available. Defaults to true.",
 				},
+				"max_dependents": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum inbound dependent nodes to return. Defaults to %d.", graph.NodeContextDefaultMaxDependents),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxDependents,
+				},
 				"max_callers": map[string]interface{}{
 					"type":        "integer",
-					"description": fmt.Sprintf("Maximum dependent/caller nodes to return. Defaults to %d.", graph.NodeContextDefaultMaxCallers),
+					"description": fmt.Sprintf("Deprecated alias for max_dependents. Defaults to %d.", graph.NodeContextDefaultMaxCallers),
 					"minimum":     1,
 					"maximum":     graph.NodeContextMaxCallers,
 				},
@@ -101,11 +107,29 @@ func (s *Server) toolDefinitions() []toolDefinition {
 					"minimum":     1,
 					"maximum":     graph.NodeContextMaxDependencies,
 				},
+				"max_relations": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum location, route, interface, or concurrency relations per section. Defaults to %d.", graph.NodeContextDefaultMaxRelations),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxRelations,
+				},
 				"max_depth": map[string]interface{}{
 					"type":        "integer",
 					"description": fmt.Sprintf("Maximum inbound dependent depth. Defaults to %d.", graph.NodeContextDefaultMaxDepth),
 					"minimum":     1,
 					"maximum":     graph.NodeContextMaxDepth,
+				},
+				"max_source_lines": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum source lines to include. Defaults to %d.", graph.NodeContextDefaultMaxSourceLines),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxSourceLines,
+				},
+				"max_source_bytes": map[string]interface{}{
+					"type":        "integer",
+					"description": fmt.Sprintf("Maximum source bytes to include. Defaults to %d.", graph.NodeContextDefaultMaxSourceBytes),
+					"minimum":     1,
+					"maximum":     graph.NodeContextMaxSourceBytes,
 				},
 			}, "node_id"),
 			handler: (*Server).handleGetNodeContextTool,
@@ -310,23 +334,77 @@ func (s *Server) handleGetNodeContextTool(ctx context.Context, id interface{}, r
 	args, err := parseToolArgs[struct {
 		NodeID          string `json:"node_id"`
 		IncludeSource   *bool  `json:"include_source"`
-		MaxCallers      int    `json:"max_callers"`
-		MaxDependencies int    `json:"max_dependencies"`
-		MaxDepth        int    `json:"max_depth"`
+		MaxDependents   *int   `json:"max_dependents"`
+		MaxCallers      *int   `json:"max_callers"`
+		MaxDependencies *int   `json:"max_dependencies"`
+		MaxRelations    *int   `json:"max_relations"`
+		MaxDepth        *int   `json:"max_depth"`
+		MaxSourceLines  *int   `json:"max_source_lines"`
+		MaxSourceBytes  *int   `json:"max_source_bytes"`
 	}](raw)
 	if err != nil {
 		return s.errorResult(id, err)
 	}
-	nodeContext, err := s.graph.Query().GetNodeContext(args.NodeID, graph.NodeContextOptions{
-		IncludeSource:   args.IncludeSource,
-		MaxCallers:      args.MaxCallers,
-		MaxDependencies: args.MaxDependencies,
-		MaxDepth:        args.MaxDepth,
-	})
+	if args.MaxDependents != nil && args.MaxCallers != nil && *args.MaxDependents != *args.MaxCallers {
+		return s.errorResult(id, fmt.Errorf("max_dependents and max_callers must match when both are provided"))
+	}
+	opts := graph.NodeContextOptions{IncludeSource: args.IncludeSource}
+	if args.MaxDependents != nil {
+		opts.MaxDependents = *args.MaxDependents
+	} else if args.MaxCallers != nil {
+		opts.MaxDependents = *args.MaxCallers
+	}
+	if err := applyNodeContextLimit("max_dependents", args.MaxDependents, graph.NodeContextMaxDependents); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_callers", args.MaxCallers, graph.NodeContextMaxCallers); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_dependencies", args.MaxDependencies, graph.NodeContextMaxDependencies); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_relations", args.MaxRelations, graph.NodeContextMaxRelations); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_depth", args.MaxDepth, graph.NodeContextMaxDepth); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_source_lines", args.MaxSourceLines, graph.NodeContextMaxSourceLines); err != nil {
+		return s.errorResult(id, err)
+	}
+	if err := applyNodeContextLimit("max_source_bytes", args.MaxSourceBytes, graph.NodeContextMaxSourceBytes); err != nil {
+		return s.errorResult(id, err)
+	}
+	if args.MaxDependencies != nil {
+		opts.MaxDependencies = *args.MaxDependencies
+	}
+	if args.MaxRelations != nil {
+		opts.MaxRelations = *args.MaxRelations
+	}
+	if args.MaxDepth != nil {
+		opts.MaxDepth = *args.MaxDepth
+	}
+	if args.MaxSourceLines != nil {
+		opts.MaxSourceLines = *args.MaxSourceLines
+	}
+	if args.MaxSourceBytes != nil {
+		opts.MaxSourceBytes = *args.MaxSourceBytes
+	}
+	nodeContext, err := s.graph.Query().GetNodeContext(args.NodeID, opts)
 	if err != nil {
 		return s.errorResult(id, err)
 	}
 	return s.textResult(id, formatNodeContextMarkdown(nodeContext))
+}
+
+func applyNodeContextLimit(name string, value *int, max int) error {
+	if value == nil {
+		return nil
+	}
+	if *value < 1 || *value > max {
+		return fmt.Errorf("%s must be between 1 and %d", name, max)
+	}
+	return nil
 }
 
 func (s *Server) handleGetRepositoryStructureTool(ctx context.Context, id interface{}, raw json.RawMessage) *Response {

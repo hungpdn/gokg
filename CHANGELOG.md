@@ -17,6 +17,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Changed
 
+- `get_node_context` now bounds dependent, relation, source-line, and source-byte payloads and exposes `max_dependents`, `max_relations`, `max_source_lines`, and `max_source_bytes` controls.
 - MCP tool handling is split into dedicated tool definitions and handlers.
 - MCP HTTP and stdio request contexts now propagate into long-running tool calls such as change impact analysis.
 - Change impact analysis now includes untracked Git files by default, with `--tracked-only` available for tracked-only reports.
@@ -25,6 +26,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Fixed
 
+- `get_node_context` now truncates oversized source and relationship sections with warnings instead of returning unbounded MCP responses.
 - Hardened impact `base_ref` validation against Git option injection and control characters.
 - Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
 - Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.

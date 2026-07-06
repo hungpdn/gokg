@@ -202,6 +202,11 @@ func TestHandleListTools(t *testing.T) {
 	assert.Contains(t, cypherDescription, "REGISTERS_ROUTE")
 	assert.Contains(t, sourceDescription, "route registration")
 	assert.Contains(t, nodeContextSchema["required"], "node_id")
+	nodeContextProperties := nodeContextSchema["properties"].(map[string]interface{})
+	assert.Contains(t, nodeContextProperties, "max_dependents")
+	assert.Contains(t, nodeContextProperties, "max_relations")
+	assert.Contains(t, nodeContextProperties, "max_source_lines")
+	assert.Contains(t, nodeContextProperties, "max_source_bytes")
 }
 
 func TestHandleCallToolError(t *testing.T) {
@@ -354,7 +359,11 @@ func TestHandleCallNodeContextRejectsUnsafeLimits(t *testing.T) {
 	for _, paramsRaw := range [][]byte{
 		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_depth":4}}`),
 		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_callers":-1}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_dependents":0}}`),
 		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_dependencies":101}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_relations":0}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_source_lines":0}}`),
+		[]byte(`{"name":"get_node_context","arguments":{"node_id":"pkg.Target","max_source_bytes":0}}`),
 	} {
 		req := &Request{JSONRPC: "2.0", ID: 16, Method: "tools/call", Params: json.RawMessage(paramsRaw)}
 		res := server.handleRequest(req)

@@ -119,6 +119,101 @@ func TestGetNodeContextCapsDependenciesAndDependents(t *testing.T) {
 	assert.Contains(t, strings.Join(got.Warnings, "\n"), "dependents truncated")
 }
 
+func TestGetNodeContextCapsRelationsConcurrencyAndSource(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "service.go")
+	require.NoError(t, os.WriteFile(filePath, []byte("package pkg\n\nfunc Target() {\n\tfirst()\n\tsecond()\n\tthird()\n}\n"), 0o644))
+
+	nodes := []*parser.Node{
+		{ID: "pkg.Target", Type: parser.NodeTypeFunc, Name: "Target", PkgPath: "pkg", FilePath: filePath, Lines: [2]int{3, 7}},
+		{ID: "pkg.ChildA", Type: parser.NodeTypeFunc, Name: "ChildA", PkgPath: "pkg"},
+		{ID: "pkg.ChildB", Type: parser.NodeTypeFunc, Name: "ChildB", PkgPath: "pkg"},
+		{ID: "pkg.ParentA", Type: parser.NodeTypeFile, Name: "ParentA", PkgPath: "pkg"},
+		{ID: "pkg.ParentB", Type: parser.NodeTypeFile, Name: "ParentB", PkgPath: "pkg"},
+		{ID: "pkg.RouteA", Type: parser.NodeTypeRoute, Name: "GET /a", PkgPath: "pkg"},
+		{ID: "pkg.RouteB", Type: parser.NodeTypeRoute, Name: "GET /b", PkgPath: "pkg"},
+		{ID: "pkg.ImplA", Type: parser.NodeTypeStruct, Name: "ImplA", PkgPath: "pkg"},
+		{ID: "pkg.ImplB", Type: parser.NodeTypeStruct, Name: "ImplB", PkgPath: "pkg"},
+		{ID: "pkg.Target.goroutineA", Type: parser.NodeTypeGoroutine, Name: "goroutineA", PkgPath: "pkg"},
+		{ID: "pkg.Target.goroutineB", Type: parser.NodeTypeGoroutine, Name: "goroutineB", PkgPath: "pkg"},
+	}
+	for _, node := range nodes {
+		_, err := g.AddNode(ctx, node)
+		require.NoError(t, err)
+	}
+	edges := []*parser.Edge{
+		{From: "pkg.Target", To: "pkg.ChildA", Type: parser.EdgeTypeContains},
+		{From: "pkg.Target", To: "pkg.ChildB", Type: parser.EdgeTypeContains},
+		{From: "pkg.ParentA", To: "pkg.Target", Type: parser.EdgeTypeContains},
+		{From: "pkg.ParentB", To: "pkg.Target", Type: parser.EdgeTypeContains},
+		{From: "pkg.RouteA", To: "pkg.Target", Type: parser.EdgeTypeReferences},
+		{From: "pkg.RouteB", To: "pkg.Target", Type: parser.EdgeTypeReferences},
+		{From: "pkg.ImplA", To: "pkg.Target", Type: parser.EdgeTypeImplements},
+		{From: "pkg.ImplB", To: "pkg.Target", Type: parser.EdgeTypeImplements},
+		{From: "pkg.Target", To: "pkg.Target.goroutineA", Type: parser.EdgeTypeSpawns},
+		{From: "pkg.Target", To: "pkg.Target.goroutineB", Type: parser.EdgeTypeSpawns},
+	}
+	for _, edge := range edges {
+		require.NoError(t, g.AddEdge(ctx, edge))
+	}
+
+	got, err := g.Query().GetNodeContext("pkg.Target", NodeContextOptions{
+		MaxRelations:   1,
+		MaxSourceLines: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Children, 1)
+	require.Len(t, got.Parents, 1)
+	require.Len(t, got.Routes, 1)
+	require.Len(t, got.Interfaces, 1)
+	require.Len(t, got.Concurrency, 1)
+	assert.True(t, got.ChildrenTruncated)
+	assert.True(t, got.ParentsTruncated)
+	assert.True(t, got.RoutesTruncated)
+	assert.True(t, got.InterfacesTruncated)
+	assert.True(t, got.ConcurrencyTruncated)
+	assert.True(t, got.SourceTruncated)
+	assert.Contains(t, got.SourceCode, "func Target()")
+	assert.NotContains(t, got.SourceCode, "second()")
+	warnings := strings.Join(got.Warnings, "\n")
+	assert.Contains(t, warnings, "children truncated")
+	assert.Contains(t, warnings, "parents truncated")
+	assert.Contains(t, warnings, "routes truncated")
+	assert.Contains(t, warnings, "interfaces truncated")
+	assert.Contains(t, warnings, "concurrency context truncated")
+	assert.Contains(t, warnings, "source truncated")
+}
+
+func TestGetNodeContextCapsLongSourceLineByBytes(t *testing.T) {
+	ctx := context.Background()
+	g := NewGraph(nil)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "generated.go")
+	longLine := "func Generated() { _ = \"" + strings.Repeat("x", 70*1024) + "\" }\n"
+	require.NoError(t, os.WriteFile(filePath, []byte("package pkg\n"+longLine), 0o644))
+
+	_, err := g.AddNode(ctx, &parser.Node{
+		ID:       "pkg.Generated",
+		Type:     parser.NodeTypeFunc,
+		Name:     "Generated",
+		PkgPath:  "pkg",
+		FilePath: filePath,
+		Lines:    [2]int{2, 2},
+	})
+	require.NoError(t, err)
+
+	got, err := g.Query().GetNodeContext("pkg.Generated", NodeContextOptions{
+		MaxSourceLines: 10,
+		MaxSourceBytes: 256,
+	})
+	require.NoError(t, err)
+	require.True(t, got.SourceTruncated)
+	assert.LessOrEqual(t, len(got.SourceCode), 256)
+	assert.Contains(t, strings.Join(got.Warnings, "\n"), "source truncated")
+}
+
 func TestGetNodeContextSourceWarningAndUnknownNode(t *testing.T) {
 	ctx := context.Background()
 	g := NewGraph(nil)
