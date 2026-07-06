@@ -341,7 +341,7 @@ func readNodeContextSource(node *parser.Node, maxLines int, maxBytes int) (strin
 	if err != nil {
 		return "", false, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	var b strings.Builder
 	if maxBytes < 4096 {
