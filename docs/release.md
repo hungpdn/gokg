@@ -39,11 +39,12 @@ Use this checklist for tagged GoKG releases.
 
 ## Tag
 
-Use semantic version tags. Alpha releases should include an alpha suffix.
+Use a semantic version tag from `main`. Keep the prerelease suffix for alpha or release-candidate builds; remove it only for the final release.
 
 ```bash
-git tag v0.1.0-alpha.4
-git push origin v0.1.0-alpha.4
+TAG=v0.1.0-rc.1
+git tag "$TAG"
+git push origin "$TAG"
 ```
 
 ## Verify
@@ -64,7 +65,8 @@ After the GitHub Actions release workflow finishes:
 7. Test the Go install path:
 
    ```bash
-   go install github.com/hungpdn/gokg/cmd/gokg@v0.1.0-alpha.4
+   TAG=v0.1.0-rc.1
+   go install github.com/hungpdn/gokg/cmd/gokg@"$TAG"
    gokg version
    ```
 

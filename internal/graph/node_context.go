@@ -309,13 +309,13 @@ func (qb *QueryBuilder) nodeDistancesFromInboundLocked(sourceID int64, inbound m
 			if prevDistance, ok := seen[fromID]; ok && prevDistance <= nextDistance {
 				continue
 			}
+			if maxNodes > 0 && len(resultsByID) >= maxNodes {
+				return sortedNodeDistances(resultsByID), true
+			}
 			seen[fromID] = nextDistance
 			result := NodeDistance{Node: cloneNode(qb.g.nodes[fromID]), Distance: nextDistance}
 			resultsByID[fromID] = result
 			queue = append(queue, queuedNode{id: fromID, distance: nextDistance})
-			if maxNodes > 0 && len(resultsByID) >= maxNodes {
-				return sortedNodeDistances(resultsByID), true
-			}
 		}
 	}
 	return sortedNodeDistances(resultsByID), false

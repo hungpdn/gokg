@@ -117,6 +117,15 @@ func TestGetNodeContextCapsDependenciesAndDependents(t *testing.T) {
 	assert.True(t, got.DependentsTruncated)
 	assert.Contains(t, strings.Join(got.Warnings, "\n"), "dependencies truncated")
 	assert.Contains(t, strings.Join(got.Warnings, "\n"), "dependents truncated")
+
+	exactlyCapped, err := g.Query().GetNodeContext("pkg.Target", NodeContextOptions{
+		IncludeSource:   boolPtr(false),
+		MaxDependencies: 2,
+		MaxDependents:   2,
+	})
+	require.NoError(t, err)
+	assert.False(t, exactlyCapped.DependenciesTruncated)
+	assert.False(t, exactlyCapped.DependentsTruncated)
 }
 
 func TestGetNodeContextCapsRelationsConcurrencyAndSource(t *testing.T) {

@@ -49,6 +49,9 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
 
+release:
+  prerelease: auto
+
 homebrew_casks:
   - name: gokg
     ids:

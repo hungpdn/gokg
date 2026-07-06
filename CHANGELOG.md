@@ -29,12 +29,14 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - `get_node_context` now truncates oversized source and relationship sections with warnings instead of returning unbounded MCP responses.
 - Hardened impact `base_ref` validation against Git option injection and control characters.
 - Impact now verifies `base_ref` as a commit before running Git diff and separates revisions from pathspecs.
-- Impact diff and untracked-file parsing now handle long generated lines and NUL-separated file names.
+- Impact diff and untracked-file parsing now handle long generated lines, Git-quoted tracked paths, and NUL-separated untracked file names.
+- Blast-radius and node-context queries now report truncation only when results actually exceed their configured limit.
 - Impact freshness diagnostics now compare current dirty status fingerprints, resolve symlink-equivalent roots, and make strict mode reject unknown freshness.
 - Improved repo-aware file-range matching with normalized paths, symlink handling, and legacy blank `RepoID` compatibility.
 - Single-repo impact and MCP mode now infer the analyzed repo root from graph metadata when available, avoiding custom `--db` and current-working-directory mismatches.
 - Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.
 - Impact Markdown output now escapes inline values such as repo IDs, node names, file paths, and base refs.
+- GoReleaser now marks semantic-version prerelease tags as GitHub prereleases automatically.
 
 ## [v0.1.0-alpha.4] - 2026-06-26
 

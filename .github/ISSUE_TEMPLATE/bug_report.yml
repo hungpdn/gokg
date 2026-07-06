@@ -43,7 +43,7 @@ body:
           "version": "dev",
           "commit": "none",
           "date": "unknown",
-          "go_version": "go1.25.0",
+          "go_version": "go1.25.11",
           "platform": "darwin/amd64"
         }
     validations:

@@ -431,16 +431,11 @@ func ParseDiff(repo Repo, r io.Reader) ([]ChangedFile, error) {
 }
 
 func parseDiffLine(repo Repo, line string, flush func(), current **ChangedFile) {
-	if strings.HasPrefix(line, "diff --git a/") {
+	if strings.HasPrefix(line, "diff --git ") {
 		flush()
-		rest := strings.TrimPrefix(line, "diff --git a/")
-		idx := strings.LastIndex(rest, " b/")
 		path := ""
-		if idx != -1 {
-			path = rest[idx+3:]
-			if path == "/dev/null" {
-				path = rest[:idx]
-			}
+		if _, newPath, ok := parseDiffHeaderPaths(strings.TrimPrefix(line, "diff --git ")); ok {
+			path = trimDiffPathPrefix(newPath)
 		}
 		*current = &ChangedFile{RepoID: repo.ID, Path: path, Status: "M"}
 		return
@@ -458,17 +453,96 @@ func parseDiffLine(repo Repo, line string, flush func(), current **ChangedFile) 
 		(*current).Status = "R"
 	case strings.HasPrefix(line, "rename to "):
 		(*current).Status = "R"
-		(*current).Path = strings.TrimSpace(strings.TrimPrefix(line, "rename to "))
-	case strings.HasPrefix(line, "+++ b/"):
-		(*current).Path = strings.TrimPrefix(line, "+++ b/")
-	case strings.HasPrefix(line, "--- a/") && (*current).Path == "":
-		(*current).Path = strings.TrimPrefix(line, "--- a/")
+		if path, ok := parseGitPath(strings.TrimPrefix(line, "rename to ")); ok {
+			(*current).Path = filepath.ToSlash(path)
+		}
+	case strings.HasPrefix(line, "+++ "):
+		if path, ok := parseGitPath(strings.TrimPrefix(line, "+++ ")); ok && path != "/dev/null" {
+			(*current).Path = trimDiffPathPrefix(path)
+		}
+	case strings.HasPrefix(line, "--- ") && (*current).Path == "":
+		if path, ok := parseGitPath(strings.TrimPrefix(line, "--- ")); ok && path != "/dev/null" {
+			(*current).Path = trimDiffPathPrefix(path)
+		}
 	case strings.HasPrefix(line, "@@ "):
 		rg, ok := parseHunkRange(line)
 		if ok {
 			(*current).Ranges = append((*current).Ranges, rg)
 		}
 	}
+}
+
+func parseDiffHeaderPaths(value string) (string, string, bool) {
+	if strings.HasPrefix(value, `"`) {
+		oldToken, rest, ok := consumeQuotedGitPath(value)
+		if !ok {
+			return "", "", false
+		}
+		newToken, remainder, ok := consumeQuotedGitPath(strings.TrimSpace(rest))
+		if !ok || strings.TrimSpace(remainder) != "" {
+			return "", "", false
+		}
+		oldPath, oldOK := parseGitPath(oldToken)
+		newPath, newOK := parseGitPath(newToken)
+		return oldPath, newPath, oldOK && newOK
+	}
+
+	for offset := 0; offset < len(value); {
+		idx := strings.Index(value[offset:], " b/")
+		if idx < 0 {
+			break
+		}
+		idx += offset
+		oldPath := value[:idx]
+		newPath := value[idx+1:]
+		if trimDiffPathPrefix(oldPath) == trimDiffPathPrefix(newPath) {
+			return oldPath, newPath, true
+		}
+		offset = idx + len(" b/")
+	}
+
+	idx := strings.LastIndex(value, " b/")
+	if idx < 0 {
+		return "", "", false
+	}
+	return value[:idx], value[idx+1:], true
+}
+
+func consumeQuotedGitPath(value string) (string, string, bool) {
+	if len(value) == 0 || value[0] != '"' {
+		return "", value, false
+	}
+	for i := 1; i < len(value); i++ {
+		switch value[i] {
+		case '\\':
+			i++
+		case '"':
+			return value[:i+1], value[i+1:], true
+		}
+	}
+	return "", value, false
+}
+
+func parseGitPath(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if value[0] != '"' {
+		return value, true
+	}
+	path, err := strconv.Unquote(value)
+	if err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+func trimDiffPathPrefix(path string) string {
+	if strings.HasPrefix(path, "a/") || strings.HasPrefix(path, "b/") {
+		path = path[2:]
+	}
+	return filepath.ToSlash(path)
 }
 
 func parseHunkRange(line string) (LineRange, bool) {
