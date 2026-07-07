@@ -15,6 +15,24 @@ body:
       description: What happened, and what did you expect instead?
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of GoKG is affected?
+      options:
+        - Parser / graph extraction
+        - Cypher query engine
+        - MCP stdio server
+        - MCP HTTP server
+        - Workspace support
+        - File watcher
+        - BadgerDB storage
+        - Release / install
+        - Documentation
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: reproduce
     attributes:
@@ -33,19 +51,46 @@ body:
       description: Paste relevant output, stack traces, or logs.
       render: text
   - type: textarea
-    id: environment
+    id: version
     attributes:
-      label: Environment
-      description: Paste `gokg version --json`, `go version`, and OS details.
+      label: GoKG version
+      description: Paste `gokg version --json`.
       render: json
       placeholder: |
         {
-          "version": "dev",
-          "commit": "none",
-          "date": "unknown",
+          "version": "v0.1.0-alpha.4",
+          "commit": "abc123",
+          "date": "2026-06-26T00:00:00Z",
           "go_version": "go1.25.11",
           "platform": "darwin/amd64"
         }
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Installation method
+      description: How was GoKG installed or built?
+      options:
+        - go install
+        - Homebrew
+        - Scoop
+        - GitHub Release archive
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Go and OS details
+      description: Paste `go version`, OS details, and any relevant `go env` output such as `GOMOD`, `GOWORK`, `GOPATH`, or `GOBIN`.
+      render: text
+      placeholder: |
+        go version go1.25.11 darwin/amd64
+        macOS 15.x
+        GOMOD=/path/to/go.mod
+        GOWORK=
     validations:
       required: true
   - type: checkboxes

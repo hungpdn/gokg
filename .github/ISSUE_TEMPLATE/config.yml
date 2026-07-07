@@ -1,1 +1,5 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/hungpdn/gokg/security/policy
+    about: Please do not open public issues for suspected vulnerabilities.

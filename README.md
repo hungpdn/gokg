@@ -4,7 +4,6 @@
 ![Go Version](https://img.shields.io/badge/go-1.25.11-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hungpdn/gokg)](https://goreportcard.com/report/github.com/hungpdn/gokg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **GoKG** is a local, open-source tool that converts Go source code into a semantic knowledge graph. It acts as a local MCP server that gives AI coding agents deep architectural context.

@@ -12,6 +12,15 @@ body:
     validations:
       required: true
   - type: textarea
+    id: impact
+    attributes:
+      label: Why it matters
+      description: Who benefits from this, and what decision or workflow gets easier?
+      placeholder: |
+        This helps AI coding agents answer impact-analysis questions across Go services without manually reading every package.
+    validations:
+      required: true
+  - type: textarea
     id: proposal
     attributes:
       label: Proposal
@@ -33,6 +42,8 @@ body:
         - MCP server
         - CLI UX
         - Workspace support
+        - File watcher
+        - BadgerDB storage
         - Export formats
         - Release / install
         - Documentation
