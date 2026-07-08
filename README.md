@@ -1,6 +1,6 @@
 # GoKG - Golang Knowledge Graph
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/cmd/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg/cmd/gokg)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg)
 ![Go Version](https://img.shields.io/badge/go-1.25.11-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
