@@ -81,11 +81,7 @@ What to look for:
 - Does it expose an implementation edge equivalent to `IMPLEMENTS`?
 - Does it only show the interface members and same-name methods?
 
-Observed with CodeGraph `1.0.1`: `codegraph node PaymentProcessor` shows the
-interface and its `Process` member, but does not list `StripeProcessor` as an
-implementer in that output.
-
-Observed with CodeGraph `1.3.0`: same result on this fixture.
+Observed with CodeGraph `1.3.0` on this fixture:
 `codegraph node PaymentProcessor` shows only the interface and its `Process`
 member. `codegraph explore "What implements PaymentProcessor?"` returns the
 relevant source containing `StripeProcessor`, but does not expose a first-class
@@ -95,12 +91,6 @@ Safe claim:
 
 ```text
 GoKG exposes implicit Go interface implementations as first-class graph edges.
-```
-
-Avoid this claim unless retested against the current CodeGraph release:
-
-```text
-CodeGraph cannot understand Go interfaces.
 ```
 
 ## Example 2: Goroutines and Channels
@@ -170,11 +160,7 @@ What to look for:
 - Does it expose a channel node for `workQueue`?
 - Does it expose send/receive edges separately from ordinary function calls?
 
-Observed with CodeGraph `1.0.1`: `codegraph node Dispatcher` shows the source
-and a `Calls -> worker` trail, while `codegraph query workQueue` returns no
-symbol result.
-
-Observed with CodeGraph `1.3.0`: same result on this fixture.
+Observed with CodeGraph `1.3.0` on this fixture:
 `codegraph node Dispatcher` shows source plus `Calls -> worker`, while
 `codegraph query workQueue` and `codegraph query goroutine` return no symbol
 result.
@@ -183,12 +169,6 @@ Safe claim:
 
 ```text
 GoKG exposes goroutines and channel send/receive flows as first-class graph nodes and edges.
-```
-
-Avoid this claim unless retested:
-
-```text
-CodeGraph cannot reason about concurrency at all.
 ```
 
 ## Example 3: Multi-Repo Workspace
@@ -235,11 +215,9 @@ cd "$TMPDIR/beyond-ast/03-multi-repo-workspace/shared-libs"
 "$CODEGRAPH_BIN" callers Validate
 ```
 
-Observed with CodeGraph `1.0.1`: from the separate `shared-libs` index,
-`codegraph callers Validate` does not show callers from `order-service` or
-`payment-service`.
-
-Observed with CodeGraph `1.3.0`: same result for separate project indexes.
+Observed with CodeGraph `1.3.0` for separate project indexes:
+`codegraph callers Validate` from the separate `shared-libs` index does not show
+callers from `order-service` or `payment-service`.
 The parent-folder index below is required for CodeGraph to see all three
 folders together in this fixture.
 
@@ -251,10 +229,6 @@ cd "$TMPDIR/beyond-ast/03-multi-repo-workspace"
 "$CODEGRAPH_BIN" callers Validate
 "$CODEGRAPH_BIN" impact Validate
 ```
-
-Observed with CodeGraph `1.0.1`: when indexing the parent folder that contains
-all three modules, CodeGraph finds callers such as `ProcessOrder` and
-`ConsumeOrderCreated`.
 
 Observed with CodeGraph `1.3.0`: parent-folder indexing finds the callers and
 impact chain:
@@ -269,13 +243,7 @@ Callers of "Validate" (2):
 `shared-libs/event.go`, `order-service/handler.go`, and
 `payment-service/consumer.go`.
 
-This means the fair claim is not:
-
-```text
-CodeGraph cannot find cross-repo callers in this example.
-```
-
-The fair claim is:
+Use this positioning:
 
 ```text
 GoKG has an explicit multi-repo workspace model with repo IDs, workspace queries,
@@ -299,8 +267,5 @@ Use these in public copy:
 - GoKG workspace impact analysis should be validated with real multi-Git-repo workspaces, not this single-Git-root fixture.
 - CodeGraph is broader and polyglot; GoKG is narrower and Go-first.
 
-Do not use these without retesting:
-
-- CodeGraph cannot understand Go.
-- CodeGraph cannot find cross-repo callers.
-- CodeGraph cannot answer architecture questions.
+Avoid broad negative claims about other tools. Keep comparisons tied to tested
+fixtures, versions, and CLI output.
