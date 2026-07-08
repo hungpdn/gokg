@@ -65,6 +65,9 @@ func (p *Parser) ParseWorkspace(ctx context.Context, dir string) (*ParseResult, 
 		return nil, fmt.Errorf("encountered errors during package loading")
 	}
 	pkgs = selectGraphPackages(pkgs)
+	if err := requireGraphPackages(dir, pkgs); err != nil {
+		return nil, err
+	}
 
 	result := &ParseResult{
 		Nodes: make([]*Node, 0, len(pkgs)*8),
@@ -425,6 +428,9 @@ func (p *Parser) ParsePackage(ctx context.Context, dir string) (*ParseResult, er
 		return nil, fmt.Errorf("encountered errors during package loading")
 	}
 	pkgs = selectGraphPackages(pkgs)
+	if err := requireGraphPackages(dir, pkgs); err != nil {
+		return nil, err
+	}
 
 	result := &ParseResult{
 		Nodes: make([]*Node, 0, len(pkgs)*8),
@@ -489,8 +495,8 @@ func (p *Parser) ParsePackageIncremental(ctx context.Context, dir string) (*Pars
 	}
 	// Tolerate errors from missing dependency type info in incremental mode.
 	pkgs = selectGraphPackages(pkgs)
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no packages found in %s", dir)
+	if err := requireGraphPackages(dir, pkgs); err != nil {
+		return nil, err
 	}
 
 	result := &ParseResult{
@@ -649,6 +655,13 @@ func selectGraphPackages(pkgs []*packages.Package) []*packages.Package {
 		result = append(result, selected[pkgPath])
 	}
 	return result
+}
+
+func requireGraphPackages(dir string, pkgs []*packages.Package) error {
+	if len(pkgs) > 0 {
+		return nil
+	}
+	return fmt.Errorf("no Go packages loaded from %s; ensure this is a loadable Go module and the Go toolchain can write to its build cache", dir)
 }
 
 func shouldPreferGraphPackage(candidate, current *packages.Package) bool {

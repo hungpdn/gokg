@@ -4,12 +4,13 @@ GoKG is a local-first developer tool that reads Go source code, writes a local B
 
 ## Supported Versions
 
-Until the first stable release, security fixes are made on `main` and included in the next alpha tag.
+Security fixes are made on `main` and included in the next patch or minor release.
 
 | Version | Supported |
 |---|---|
 | `main` | Yes |
-| `v0.x` alpha releases | Best effort |
+| `v0.1.x` | Yes |
+| `v0.1.0` prereleases | Best effort |
 
 ## Reporting a Vulnerability
 

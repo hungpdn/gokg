@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/tools/go/packages"
 )
 
 func TestParseWorkspace(t *testing.T) {
@@ -46,6 +47,17 @@ func TestParseWorkspace(t *testing.T) {
 		}
 	}
 	assert.True(t, foundContainsEdge, "Should find at least one CONTAINS edge")
+}
+
+func TestRequireGraphPackagesRejectsEmptySelection(t *testing.T) {
+	err := requireGraphPackages("/tmp/empty", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no Go packages loaded")
+	assert.Contains(t, err.Error(), "/tmp/empty")
+}
+
+func TestRequireGraphPackagesAcceptsLoadedPackages(t *testing.T) {
+	require.NoError(t, requireGraphPackages("/tmp/repo", []*packages.Package{{PkgPath: "example.com/repo"}}))
 }
 
 func TestParseWorkspacePhase9Nodes(t *testing.T) {

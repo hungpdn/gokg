@@ -8,6 +8,14 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [v0.1.0] - 2026-07-08
+
+### Added
+
 - `get_node_context` MCP tool and graph query support for retrieving a node's full structural, source, dependency, dependent, routing, and concurrency context.
 - `gokg impact` command for Git diff based change impact analysis with Markdown and JSON output.
 - `get_change_impact` MCP tool for agent-driven impact reports across local repositories and workspaces.
@@ -37,6 +45,7 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 - Impact reports now treat no-hunk Git changes as whole-file changes and avoid rescanning the full graph for unmatched-file warnings.
 - Impact Markdown output now escapes inline values such as repo IDs, node names, file paths, and base refs.
 - GoReleaser now marks semantic-version prerelease tags as GitHub prereleases automatically.
+- Analysis now fails clearly when no Go packages are loaded instead of writing a folder-only graph that looks successful.
 
 ## [v0.1.0-alpha.4] - 2026-06-26
 
