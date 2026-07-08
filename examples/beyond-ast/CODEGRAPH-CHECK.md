@@ -266,6 +266,3 @@ Use these in public copy:
 - GoKG has explicit multi-repo workspaces with `RepoID`.
 - GoKG workspace impact analysis should be validated with real multi-Git-repo workspaces, not this single-Git-root fixture.
 - CodeGraph is broader and polyglot; GoKG is narrower and Go-first.
-
-Avoid broad negative claims about other tools. Keep comparisons tied to tested
-fixtures, versions, and CLI output.
