@@ -34,6 +34,39 @@ func TestHTTPHandlerInitialize(t *testing.T) {
 	require.NotNil(t, res.Result)
 }
 
+func TestHTTPHandlerTelemetryCapturesSessionAndClient(t *testing.T) {
+	recorder := &recordingTelemetry{}
+	server := NewServer(graph.NewGraph(nil), WithTelemetryRecorder(recorder))
+	handler := server.HTTPHandler("/mcp")
+
+	initBody := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"http-agent","version":"2.1"}}}`)
+	initReq := httptest.NewRequest(http.MethodPost, "/mcp", initBody)
+	initReq.Header.Set("Mcp-Session-Id", "session-http-1")
+	initReq.Header.Set("User-Agent", "test-agent/2.1")
+	initRec := httptest.NewRecorder()
+	handler.ServeHTTP(initRec, initReq)
+	require.Equal(t, http.StatusOK, initRec.Code)
+
+	callBody := bytes.NewBufferString(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_nodes","arguments":{"query":"x"}}}`)
+	callReq := httptest.NewRequest(http.MethodPost, "/mcp", callBody)
+	callReq.Header.Set("Mcp-Session-Id", "session-http-1")
+	callReq.Header.Set("User-Agent", "test-agent/2.1")
+	callRec := httptest.NewRecorder()
+	handler.ServeHTTP(callRec, callReq)
+	require.Equal(t, http.StatusOK, callRec.Code)
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	event := events[0]
+	assert.Equal(t, "session-http-1", event.SessionID)
+	assert.Equal(t, "http-agent", event.ClientName)
+	assert.Equal(t, "2.1", event.ClientVersion)
+	assert.Equal(t, "http", event.Transport)
+	assert.Equal(t, "test-agent/2.1", event.UserAgent)
+	assert.Equal(t, "search_nodes", event.ToolName)
+	assert.True(t, event.Success)
+}
+
 func TestHTTPHandlerRejectsNonLocalBrowserOrigin(t *testing.T) {
 	server := NewServer(graph.NewGraph(nil))
 	body := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)

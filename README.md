@@ -138,12 +138,15 @@ gokg analyze --db .gokg/ --rebuild
 gokg mcp
 gokg mcp --workspace my-platform
 gokg mcp --http --addr 127.0.0.1:8080
+gokg mcp --telemetry --telemetry-file .gokg/telemetry.jsonl
 ```
 
 `gokg mcp --http` serves JSON-RPC over HTTP at `/mcp` by default and exposes a health check at `/healthz`. Use `--path` to change the MCP endpoint.
 
 HTTP mode is intended for local trusted clients. It binds to `127.0.0.1` by default and does not add authentication, so avoid exposing it on a public interface unless another trusted network layer protects it.
 Browser CORS access is limited to loopback origins such as `localhost`, `127.0.0.1`, and `[::1]`.
+
+MCP telemetry is opt-in. When `--telemetry` is enabled, GoKG appends one JSONL event per `tools/call` with session/client metadata, tool name, success/error status, latency, payload sizes, and estimated token counts. It does not record raw tool arguments or source-code payloads by default.
 
 ### 3. Run a Cypher Query
 
@@ -173,7 +176,19 @@ gokg stats --db .gokg --json
 
 `gokg stats` reports total nodes, edges, file nodes, unique source files, DB size, graph RAM estimate, current process heap allocation, nodes by kind, edges by kind, repo breakdowns, and the largest packages by node count.
 
-### 5. Export Visual Graphs
+### 5. Inspect MCP Telemetry
+
+```bash
+# Human-readable local MCP telemetry summary
+gokg telemetry stats --file .gokg/telemetry.jsonl
+
+# Machine-readable output for scripts
+gokg telemetry stats --file .gokg/telemetry.jsonl --json
+```
+
+`gokg telemetry stats` groups opt-in MCP tool-call records by tool, agent/client, session, and transport. Token counts are byte-based estimates for local usage analysis, not provider billing numbers.
+
+### 6. Export Visual Graphs
 
 ```bash
 gokg export --format mermaid --out graph.md

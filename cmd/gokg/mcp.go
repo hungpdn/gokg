@@ -12,6 +12,7 @@ import (
 	"github.com/hungpdn/gokg/internal/mcp"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
+	telemetrypkg "github.com/hungpdn/gokg/internal/telemetry"
 	"github.com/hungpdn/gokg/internal/watcher"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
@@ -112,7 +113,12 @@ var mcpCmd = &cobra.Command{
 				}
 			}
 
-			server := mcp.NewServer(g, mcp.WithImpactRepos(impactRepos))
+			opts, closeTelemetry, err := mcpServerOptionsFromFlags(cmd, impactRepos)
+			if err != nil {
+				return err
+			}
+			defer closeMcpTelemetry(closeTelemetry)
+			server := mcp.NewServer(g, opts...)
 			return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 		}
 
@@ -196,7 +202,12 @@ var mcpCmd = &cobra.Command{
 			}
 		}
 
-		server := mcp.NewServer(g, mcp.WithImpactRepos([]impact.Repo{impactRepo}))
+		opts, closeTelemetry, err := mcpServerOptionsFromFlags(cmd, []impact.Repo{impactRepo})
+		if err != nil {
+			return err
+		}
+		defer closeMcpTelemetry(closeTelemetry)
+		server := mcp.NewServer(g, opts...)
 		return startMCPTransport(ctx, cmd, server, httpMode, httpAddr, httpPath)
 	},
 }
@@ -209,6 +220,32 @@ func init() {
 	mcpCmd.Flags().Bool("http", false, "Serve MCP over HTTP instead of stdio")
 	mcpCmd.Flags().String("addr", "127.0.0.1:8080", "HTTP MCP listen address")
 	mcpCmd.Flags().String("path", "/mcp", "HTTP MCP endpoint path")
+	mcpCmd.Flags().Bool("telemetry", false, "Record MCP tool-call telemetry to a local JSONL file")
+	mcpCmd.Flags().String("telemetry-file", telemetrypkg.DefaultFile, "Path to MCP telemetry JSONL file")
+}
+
+func mcpServerOptionsFromFlags(cmd *cobra.Command, repos []impact.Repo) ([]mcp.ServerOption, func() error, error) {
+	opts := []mcp.ServerOption{mcp.WithImpactRepos(repos)}
+	enabled, _ := cmd.Flags().GetBool("telemetry")
+	if !enabled {
+		return opts, func() error { return nil }, nil
+	}
+	path, _ := cmd.Flags().GetString("telemetry-file")
+	recorder, err := telemetrypkg.NewJSONLRecorder(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize MCP telemetry: %w", err)
+	}
+	opts = append(opts, mcp.WithTelemetryRecorder(recorder))
+	return opts, recorder.Close, nil
+}
+
+func closeMcpTelemetry(closeFn func() error) {
+	if closeFn == nil {
+		return
+	}
+	if err := closeFn(); err != nil {
+		log.Printf("Warning: Failed to close MCP telemetry recorder: %v", err)
+	}
 }
 
 func startMCPTransport(ctx context.Context, cmd *cobra.Command, server *mcp.Server, httpMode bool, httpAddr string, httpPath string) error {

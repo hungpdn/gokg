@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/impact"
@@ -19,6 +20,7 @@ import (
 type Server struct {
 	graph       *graph.Graph
 	impactRepos []impact.Repo
+	telemetry   *telemetryState
 }
 
 type ServerOption func(*Server)
@@ -94,7 +96,8 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			continue
 		}
 
-		res := s.handleRequestContext(ctx, &req)
+		reqCtx := withTelemetryRequestMetadata(ctx, telemetryRequestMetadata{transport: "stdio"})
+		res := s.handleRequestContext(reqCtx, &req)
 		if res != nil {
 			if err := writeResponse(out, res); err != nil {
 				return err
@@ -115,7 +118,7 @@ func (s *Server) handleRequestContext(ctx context.Context, req *Request) *Respon
 
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req)
+		return s.handleInitialize(ctx, req)
 	case "notifications/initialized":
 		return nil
 	case "tools/list":
@@ -130,15 +133,20 @@ func (s *Server) handleRequestContext(ctx context.Context, req *Request) *Respon
 	return nil
 }
 
-func (s *Server) handleInitialize(req *Request) *Response {
+func (s *Server) handleInitialize(ctx context.Context, req *Request) *Response {
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
+		ClientInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
 	}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
 		}
 	}
+	s.rememberTelemetryClient(ctx, params.ClientInfo.Name, params.ClientInfo.Version)
 
 	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
 		"protocolVersion": negotiateMCPProtocolVersion(params.ProtocolVersion),
@@ -165,18 +173,28 @@ func (s *Server) handleToolsList(req *Request) *Response {
 	}}
 }
 
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) (res *Response) {
+	start := time.Now()
+	toolName := "unknown"
+	defer func() {
+		s.recordToolTelemetry(ctx, toolName, req.Params, res, time.Since(start))
+	}()
+
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
+		res = &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
+		return res
 	}
+	toolName = params.Name
 
 	for _, tool := range s.toolDefinitions() {
 		if tool.name == params.Name {
-			return tool.handler(s, ctx, req.ID, params.Arguments)
+			res = tool.handler(s, ctx, req.ID, params.Arguments)
+			return res
 		}
 	}
-	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
+	res = &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
+	return res
 }
 
 // --- Markdown formatting helpers ---

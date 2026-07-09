@@ -104,7 +104,12 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := s.handleRequestContext(r.Context(), &req)
+	reqCtx := withTelemetryRequestMetadata(r.Context(), telemetryRequestMetadata{
+		transport: "http",
+		sessionID: strings.TrimSpace(r.Header.Get("Mcp-Session-Id")),
+		userAgent: strings.TrimSpace(r.UserAgent()),
+	})
+	res := s.handleRequestContext(reqCtx, &req)
 	if res == nil {
 		if req.ID == nil {
 			w.WriteHeader(http.StatusAccepted)
