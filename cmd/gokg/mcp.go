@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,9 +26,11 @@ const (
 )
 
 var mcpCmd = &cobra.Command{
-	Use:   "mcp",
-	Short: "Start the MCP server",
-	Long:  `Start the gokg MCP (Model Context Protocol) server for AI agents. By default it communicates over stdio; pass --http to serve JSON-RPC over HTTP.`,
+	Use:     "mcp",
+	Short:   "Start the MCP server",
+	Long:    `Start the gokg MCP (Model Context Protocol) server for AI agents. By default it communicates over stdio; pass --http to serve JSON-RPC over HTTP.`,
+	Args:    cobra.NoArgs,
+	PreRunE: validateMCPTelemetryFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
@@ -220,8 +224,216 @@ func init() {
 	mcpCmd.Flags().Bool("http", false, "Serve MCP over HTTP instead of stdio")
 	mcpCmd.Flags().String("addr", "127.0.0.1:8080", "HTTP MCP listen address")
 	mcpCmd.Flags().String("path", "/mcp", "HTTP MCP endpoint path")
-	mcpCmd.Flags().Bool("telemetry", false, "Record MCP tool-call telemetry to a local JSONL file")
-	mcpCmd.Flags().String("telemetry-file", telemetrypkg.DefaultFile, "Path to MCP telemetry JSONL file")
+	addMCPTelemetryFlags(mcpCmd)
+}
+
+func addMCPTelemetryFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("telemetry", false, "Record MCP tool-call telemetry to a local JSONL file")
+	cmd.Flags().String("telemetry-file", telemetrypkg.DefaultFile, "Path to MCP telemetry JSONL file (requires --telemetry; custom paths must be outside --db)")
+	cmd.Flags().Int64("telemetry-max-bytes", telemetrypkg.DefaultMaxFileBytes, "Rotate MCP telemetry before the active JSONL file exceeds this size in bytes (requires --telemetry)")
+	cmd.Flags().Int("telemetry-max-backups", telemetrypkg.DefaultMaxBackups, "Number of rotated MCP telemetry files to retain; 0 retains none (requires --telemetry)")
+}
+
+func validateMCPTelemetryFlags(cmd *cobra.Command, _ []string) error {
+	enabled, _ := cmd.Flags().GetBool("telemetry")
+	for _, flagName := range []string{"telemetry-file", "telemetry-max-bytes", "telemetry-max-backups"} {
+		if !enabled && cmd.Flags().Changed(flagName) {
+			return fmt.Errorf("--%s requires --telemetry", flagName)
+		}
+	}
+	if !enabled {
+		return nil
+	}
+
+	path, _ := cmd.Flags().GetString("telemetry-file")
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("--telemetry-file must not be empty")
+	}
+	maxFileBytes, _ := cmd.Flags().GetInt64("telemetry-max-bytes")
+	if maxFileBytes < 0 {
+		return fmt.Errorf("--telemetry-max-bytes must be greater than or equal to 0")
+	}
+	maxBackups, _ := cmd.Flags().GetInt("telemetry-max-backups")
+	if maxBackups < 0 {
+		return fmt.Errorf("--telemetry-max-backups must be greater than or equal to 0")
+	}
+
+	_, err := validatedMCPTelemetryFilePath(cmd, path)
+	return err
+}
+
+func validatedMCPTelemetryFilePath(cmd *cobra.Command, path string) (string, error) {
+	resolvedPath, err := resolvePathForContainment(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP telemetry path %q: %w", path, err)
+	}
+	workspaceName, _ := cmd.Flags().GetString("workspace")
+	if strings.TrimSpace(workspaceName) != "" {
+		ws, err := workspace.Load(workspaceName)
+		if err != nil {
+			return "", err
+		}
+		if err := validateMCPTelemetryWorkspacePaths(ws, resolvedPath); err != nil {
+			return "", err
+		}
+		return resolvedPath, nil
+	}
+	dbPath, _ := cmd.Flags().GetString("db")
+	if err := validateMCPTelemetryFilePath(dbPath, resolvedPath); err != nil {
+		return "", err
+	}
+	return resolvedPath, nil
+}
+
+func validateMCPTelemetryFilePath(dbPath string, telemetryPath string) error {
+	absDB, err := resolvePathForContainment(dbPath)
+	if err != nil {
+		return fmt.Errorf("resolve MCP database path %q: %w", dbPath, err)
+	}
+	absTelemetry, err := resolvePathForContainment(telemetryPath)
+	if err != nil {
+		return fmt.Errorf("resolve MCP telemetry path %q: %w", telemetryPath, err)
+	}
+
+	rel, insideDB, err := telemetryPathRelativeToDB(absDB, absTelemetry)
+	if err != nil {
+		return fmt.Errorf("compare MCP telemetry path %q with database path %q: %w", telemetryPath, dbPath, err)
+	}
+	if !insideDB {
+		return nil
+	}
+	defaultName := filepath.Base(telemetrypkg.DefaultFile)
+	if rel == defaultName {
+		return nil
+	}
+	return fmt.Errorf("--telemetry-file %q must be outside --db %q; only the root %q file is preserved by analyze --rebuild", telemetryPath, dbPath, defaultName)
+}
+
+func telemetryPathRelativeToDB(absDB, absTelemetry string) (string, bool, error) {
+	if dbInfo, err := os.Stat(absDB); err == nil {
+		current := absTelemetry
+		parts := make([]string, 0, 4)
+		for {
+			if info, statErr := os.Stat(current); statErr == nil {
+				if os.SameFile(dbInfo, info) {
+					for left, right := 0, len(parts)-1; left < right; left, right = left+1, right-1 {
+						parts[left], parts[right] = parts[right], parts[left]
+					}
+					if len(parts) == 0 {
+						return ".", true, nil
+					}
+					return filepath.Join(parts...), true, nil
+				}
+			} else if !os.IsNotExist(statErr) {
+				return "", false, statErr
+			}
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+			parts = append(parts, filepath.Base(current))
+			current = parent
+		}
+	} else if !os.IsNotExist(err) {
+		return "", false, err
+	}
+
+	rel, err := filepath.Rel(absDB, absTelemetry)
+	if err != nil {
+		if !strings.EqualFold(filepath.VolumeName(absDB), filepath.VolumeName(absTelemetry)) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	inside := pathRelIsInside(rel)
+	if !inside && filesystemIsCaseInsensitive(absDB) {
+		foldedRel, foldErr := filepath.Rel(strings.ToLower(absDB), strings.ToLower(absTelemetry))
+		if foldErr == nil && pathRelIsInside(foldedRel) {
+			return rel, true, nil
+		}
+	}
+	return rel, inside, nil
+}
+
+func pathRelIsInside(rel string) bool {
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
+}
+
+func filesystemIsCaseInsensitive(path string) bool {
+	current := path
+	for {
+		info, err := os.Stat(current)
+		if err == nil {
+			base := filepath.Base(current)
+			for index, r := range base {
+				var replacement rune
+				switch {
+				case r >= 'a' && r <= 'z':
+					replacement = r - ('a' - 'A')
+				case r >= 'A' && r <= 'Z':
+					replacement = r + ('a' - 'A')
+				default:
+					continue
+				}
+				alternateBase := base[:index] + string(replacement) + base[index+len(string(r)):]
+				alternateInfo, alternateErr := os.Stat(filepath.Join(filepath.Dir(current), alternateBase))
+				return alternateErr == nil && os.SameFile(info, alternateInfo)
+			}
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+func validateMCPTelemetryWorkspacePaths(ws *workspace.Workspace, telemetryPath string) error {
+	if ws == nil {
+		return fmt.Errorf("workspace is nil")
+	}
+	for _, repo := range sortedWorkspaceRepos(ws) {
+		if err := validateMCPTelemetryFilePath(ws.GetRepoDBPath(repo.ID), telemetryPath); err != nil {
+			return fmt.Errorf("workspace repo %q: %w", repo.ID, err)
+		}
+	}
+	return nil
+}
+
+func resolvePathForContainment(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("path must not be empty")
+	}
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+
+	current := absPath
+	missing := make([]string, 0, 4)
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return filepath.Clean(resolved), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("cannot find an existing ancestor of %q", path)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func mcpServerOptionsFromFlags(cmd *cobra.Command, repos []impact.Repo) ([]mcp.ServerOption, func() error, error) {
@@ -231,12 +443,23 @@ func mcpServerOptionsFromFlags(cmd *cobra.Command, repos []impact.Repo) ([]mcp.S
 		return opts, func() error { return nil }, nil
 	}
 	path, _ := cmd.Flags().GetString("telemetry-file")
-	recorder, err := telemetrypkg.NewJSONLRecorder(path)
+	path, err := validatedMCPTelemetryFilePath(cmd, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	maxFileBytes, _ := cmd.Flags().GetInt64("telemetry-max-bytes")
+	maxBackups, _ := cmd.Flags().GetInt("telemetry-max-backups")
+	recorder, err := telemetrypkg.NewJSONLRecorderWithOptions(telemetrypkg.JSONLRecorderOptions{
+		Path:         path,
+		MaxFileBytes: maxFileBytes,
+		MaxBackups:   maxBackups,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize MCP telemetry: %w", err)
 	}
-	opts = append(opts, mcp.WithTelemetryRecorder(recorder))
-	return opts, recorder.Close, nil
+	asyncRecorder := telemetrypkg.NewAsyncRecorder(recorder, telemetrypkg.DefaultAsyncQueueSize)
+	opts = append(opts, mcp.WithTelemetryRecorder(asyncRecorder))
+	return opts, asyncRecorder.Close, nil
 }
 
 func closeMcpTelemetry(closeFn func() error) {

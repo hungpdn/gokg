@@ -61,7 +61,7 @@ body:
           "version": "v0.1.0-alpha.4",
           "commit": "abc123",
           "date": "2026-06-26T00:00:00Z",
-          "go_version": "go1.25.11",
+          "go_version": "go1.25.12",
           "platform": "darwin/amd64"
         }
     validations:
@@ -87,7 +87,7 @@ body:
       description: Paste `go version`, OS details, and any relevant `go env` output such as `GOMOD`, `GOWORK`, `GOPATH`, or `GOBIN`.
       render: text
       placeholder: |
-        go version go1.25.11 darwin/amd64
+        go version go1.25.12 darwin/amd64
         macOS 15.x
         GOMOD=/path/to/go.mod
         GOWORK=

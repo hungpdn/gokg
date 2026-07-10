@@ -89,8 +89,14 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	bodyReader := io.Reader(http.MaxBytesReader(w, r.Body, maxHTTPBodyBytes))
+	var requestCounter *countingReader
+	if s.telemetry != nil {
+		requestCounter = &countingReader{Reader: bodyReader}
+		bodyReader = requestCounter
+	}
 	var req Request
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxHTTPBodyBytes))
+	decoder := json.NewDecoder(bodyReader)
 	if err := decoder.Decode(&req); err != nil {
 		writeHTTPError(w, nil, -32700, "Parse error", http.StatusBadRequest)
 		return
@@ -103,12 +109,11 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		writeHTTPError(w, req.ID, -32600, "Invalid Request", http.StatusBadRequest)
 		return
 	}
-
-	reqCtx := withTelemetryRequestMetadata(r.Context(), telemetryRequestMetadata{
-		transport: "http",
-		sessionID: strings.TrimSpace(r.Header.Get("Mcp-Session-Id")),
-		userAgent: strings.TrimSpace(r.UserAgent()),
-	})
+	reqCtx := r.Context()
+	if requestCounter != nil {
+		req.requestBytes = requestCounter.bytes
+		reqCtx = withTelemetryRequestMetadata(reqCtx, telemetryRequestMetadata{transport: "http"})
+	}
 	res := s.handleRequestContext(reqCtx, &req)
 	if res == nil {
 		if req.ID == nil {
@@ -118,7 +123,10 @@ func (s *Server) handleHTTPRPC(w http.ResponseWriter, r *http.Request) {
 		res = &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Method not found: " + req.Method}}
 	}
 
-	writeHTTPJSON(w, http.StatusOK, res)
+	responseBytes, deliveryErr := writeHTTPJSON(w, http.StatusOK, res)
+	if s.telemetry != nil {
+		s.recordToolTelemetry(reqCtx, res, responseBytes, deliveryErr)
+	}
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +143,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeHTTPError(w, nil, -32600, "Health endpoint accepts GET requests", http.StatusMethodNotAllowed)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]string{
+	_, _ = writeHTTPJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"server": "gokg",
 	})
@@ -177,19 +185,41 @@ func isAllowedHTTPOrigin(origin string) bool {
 }
 
 func writeHTTPError(w http.ResponseWriter, id interface{}, code int, message string, status int) {
-	writeHTTPJSON(w, status, &Response{
+	_, _ = writeHTTPJSON(w, status, &Response{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &Error{Code: code, Message: message},
 	})
 }
 
-func writeHTTPJSON(w http.ResponseWriter, status int, value interface{}) {
+func writeHTTPJSON(w http.ResponseWriter, status int, value interface{}) (int, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return 0, err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		return
+	payloadBytes, err := w.Write(data)
+	if payloadBytes < 0 {
+		payloadBytes = 0
+	} else if payloadBytes > len(data) {
+		payloadBytes = len(data)
 	}
+	if err == nil && payloadBytes != len(data) {
+		err = io.ErrShortWrite
+	}
+	return payloadBytes, err
+}
+
+type countingReader struct {
+	io.Reader
+	bytes int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.bytes += n
+	return n, err
 }
 
 func normalizeHTTPPath(path string) string {

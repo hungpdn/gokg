@@ -14,6 +14,7 @@ import (
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/parser"
+	"github.com/hungpdn/gokg/internal/telemetry"
 	"github.com/hungpdn/gokg/internal/version"
 )
 
@@ -60,6 +61,8 @@ type Request struct {
 	ID      interface{}     `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
+
+	requestBytes int
 }
 
 type Response struct {
@@ -67,6 +70,8 @@ type Response struct {
 	ID      interface{} `json:"id"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *Error      `json:"error,omitempty"`
+
+	telemetry *pendingToolTelemetry
 }
 
 type Error struct {
@@ -95,12 +100,19 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			}
 			continue
 		}
-
-		reqCtx := withTelemetryRequestMetadata(ctx, telemetryRequestMetadata{transport: "stdio"})
+		reqCtx := ctx
+		if s.telemetry != nil {
+			req.requestBytes = len(line)
+			reqCtx = withTelemetryRequestMetadata(ctx, telemetryRequestMetadata{transport: "stdio"})
+		}
 		res := s.handleRequestContext(reqCtx, &req)
 		if res != nil {
-			if err := writeResponse(out, res); err != nil {
-				return err
+			responseBytes, deliveryErr := writeResponse(out, res)
+			if s.telemetry != nil {
+				s.recordToolTelemetry(reqCtx, res, responseBytes, deliveryErr)
+			}
+			if deliveryErr != nil {
+				return deliveryErr
 			}
 		}
 	}
@@ -173,28 +185,35 @@ func (s *Server) handleToolsList(req *Request) *Response {
 	}}
 }
 
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) (res *Response) {
-	start := time.Now()
-	toolName := "unknown"
-	defer func() {
-		s.recordToolTelemetry(ctx, toolName, req.Params, res, time.Since(start))
-	}()
-
-	var params toolCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		res = &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+	if s.telemetry == nil {
+		res, _ := s.dispatchToolCall(ctx, req)
 		return res
 	}
-	toolName = params.Name
+
+	start := time.Now()
+	res, toolName := s.dispatchToolCall(ctx, req)
+	requestBytes := req.requestBytes
+	if requestBytes <= 0 {
+		requestBytes = len(req.Params)
+	}
+	attachToolTelemetry(res, toolName, requestBytes, time.Since(start))
+	return res
+}
+
+func (s *Server) dispatchToolCall(ctx context.Context, req *Request) (*Response, string) {
+	var params toolCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}, "unknown"
+	}
 
 	for _, tool := range s.toolDefinitions() {
 		if tool.name == params.Name {
-			res = tool.handler(s, ctx, req.ID, params.Arguments)
-			return res
+			return tool.handler(s, ctx, req.ID, params.Arguments), tool.name
 		}
 	}
-	res = &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
-	return res
+	safeName := telemetry.SanitizeLabel(params.Name, "unknown")
+	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + safeName}}, "unknown"
 }
 
 // --- Markdown formatting helpers ---
@@ -414,18 +433,37 @@ func (s *Server) errorResult(id interface{}, err error) *Response {
 }
 
 func writeError(out io.Writer, id interface{}, code int, message string) error {
-	return writeResponse(out, &Response{
+	_, err := writeResponse(out, &Response{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &Error{Code: code, Message: message},
 	})
+	return err
 }
 
-func writeResponse(out io.Writer, res *Response) error {
+func writeResponse(out io.Writer, res *Response) (int, error) {
 	data, err := json.Marshal(res)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = fmt.Fprintf(out, "%s\n", data)
-	return err
+	payloadBytes, err := out.Write(data)
+	if payloadBytes < 0 {
+		payloadBytes = 0
+	} else if payloadBytes > len(data) {
+		payloadBytes = len(data)
+	}
+	if err != nil {
+		return payloadBytes, err
+	}
+	if payloadBytes != len(data) {
+		return payloadBytes, io.ErrShortWrite
+	}
+	newlineBytes, err := out.Write([]byte{'\n'})
+	if err != nil {
+		return payloadBytes, err
+	}
+	if newlineBytes != 1 {
+		return payloadBytes, io.ErrShortWrite
+	}
+	return payloadBytes, nil
 }

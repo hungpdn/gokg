@@ -1,7 +1,7 @@
 # GoKG - Golang Knowledge Graph
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/hungpdn/gokg/gokg.svg)](https://pkg.go.dev/github.com/hungpdn/gokg)
-![Go Version](https://img.shields.io/badge/go-1.25.11-blue)
+![Go Version](https://img.shields.io/badge/go-1.25.12-blue)
 [![Go CI](https://github.com/hungpdn/gokg/actions/workflows/go.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/go.yml)
 [![Release](https://github.com/hungpdn/gokg/actions/workflows/release.yml/badge.svg)](https://github.com/hungpdn/gokg/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -40,7 +40,7 @@ GoKG is intentionally focused on Go. Choose a polyglot or visualization-first to
 
 ## Installation
 
-GoKG requires Go `1.25.11` or newer.
+GoKG requires patched Go `1.25.12` or newer. With automatic toolchain selection enabled, `go.mod` selects Go `1.26.5`.
 
 ### Install with Go
 
@@ -128,7 +128,7 @@ gokg analyze --db .gokg/ --rebuild
 | `--module` | auto from `go.mod` | Module prefix for internal packages |
 | `--db` | `.gokg/` | Path to BadgerDB directory |
 | `--workspace` | empty | Workspace name for multi-repo analysis |
-| `--rebuild` | `false` | Delete and rebuild the selected database |
+| `--rebuild` | `false` | Delete and rebuild the selected database while preserving the root telemetry file and its rotation segments |
 | `--gc` | `true` | Run BadgerDB value-log GC after analysis |
 | `--tests` | `false` | Include `_test.go` files in analysis |
 
@@ -139,6 +139,7 @@ gokg mcp
 gokg mcp --workspace my-platform
 gokg mcp --http --addr 127.0.0.1:8080
 gokg mcp --telemetry --telemetry-file .gokg/telemetry.jsonl
+gokg mcp --telemetry --telemetry-max-bytes 67108864 --telemetry-max-backups 4
 ```
 
 `gokg mcp --http` serves JSON-RPC over HTTP at `/mcp` by default and exposes a health check at `/healthz`. Use `--path` to change the MCP endpoint.
@@ -146,7 +147,11 @@ gokg mcp --telemetry --telemetry-file .gokg/telemetry.jsonl
 HTTP mode is intended for local trusted clients. It binds to `127.0.0.1` by default and does not add authentication, so avoid exposing it on a public interface unless another trusted network layer protects it.
 Browser CORS access is limited to loopback origins such as `localhost`, `127.0.0.1`, and `[::1]`.
 
-MCP telemetry is opt-in. When `--telemetry` is enabled, GoKG appends one JSONL event per `tools/call` with session/client metadata, tool name, success/error status, latency, payload sizes, and estimated token counts. It does not record raw tool arguments or source-code payloads by default.
+MCP telemetry is opt-in: `--telemetry-file`, `--telemetry-max-bytes`, and `--telemetry-max-backups` require `--telemetry`. The default active file is `.gokg/telemetry.jsonl`; it rotates at 64 MiB and retains four backups by default. Set `--telemetry-max-backups 0` to rotate without retaining a backup. Custom telemetry paths must be outside every database used by the command (including per-repository workspace databases), except for a root `<db>/telemetry.jsonl` file that GoKG knows how to preserve. Validation resolves existing symlink ancestors and filesystem aliases before applying this rule.
+
+Recording is best-effort and never changes the MCP tool result. A bounded queue applies short backpressure when the writer falls behind: a record waits until it is enqueued, its short context expires, the recorder fails, or shutdown begins. Rejected and failed writes are counted by the async recorder, returned through recording/shutdown errors, and surfaced through rate-limited server warnings instead of being silently ignored. On shutdown, GoKG attempts to flush accepted records within a bounded five-second deadline before reporting an error. A non-blocking lock in the OS account's owner-validated `~/.cache/gokg/locks` remains outside the DB during destructive maintenance and enforces one writer per telemetry file for that OS user; concurrent MCP processes must use separate `--telemetry-file` paths. Unix containers that run with an arbitrary UID must provide a matching passwd entry/home directory. Cross-user and cross-container shared telemetry files are unsupported. Rotation bounds disk retention and removes segments beyond a newly lowered backup limit when the recorder starts, but does not replace an operator-defined retention or archival policy. GoKG requests owner-only file/directory modes on POSIX; on Windows or shared/custom directories, configure an appropriate filesystem ACL and grant telemetry write access to only one OS account.
+
+Each event contains a schema version and timestamp, transport, tool name, success/error classification, microsecond latency, JSON payload byte counts, byte-based token estimates, and whether delivery of the MCP response failed. Stdio events may include the initialized client name/version and a random per-server session ID. HTTP telemetry is intentionally anonymous and stateless: `session_id`, client fields, and `user_agent` remain blank, and untrusted `Mcp-Session-Id` or `User-Agent` headers are not persisted. Raw tool arguments, tool responses, and source-code payloads are not recorded.
 
 ### 3. Run a Cypher Query
 
@@ -180,13 +185,18 @@ gokg stats --db .gokg --json
 
 ```bash
 # Human-readable local MCP telemetry summary
-gokg telemetry stats --file .gokg/telemetry.jsonl
+gokg telemetry stats
 
 # Machine-readable output for scripts
 gokg telemetry stats --file .gokg/telemetry.jsonl --json
+
+# Print the report and exit non-zero on delivery/data-quality diagnostics
+gokg telemetry stats --strict
 ```
 
-`gokg telemetry stats` groups opt-in MCP tool-call records by tool, agent/client, session, and transport. Token counts are byte-based estimates for local usage analysis, not provider billing numbers.
+`gokg telemetry stats` opens and verifies a stable set of numeric rotation segments, reads each only to its snapshotted size from the oldest `.N` segment through `.1` and then the active file, and retries briefly if rotation changes that set. It groups records by tool, agent/client, session, and transport with bounded cardinality. Human and JSON reports include `latency_us`, MCP response delivery failures, a documented maximum relative error of 6.25% for p50/p95 histograms (max latency remains exact), and diagnostics for invalid or truncated lines/labels, scrubbed HTTP identity fields, legacy schema-v1 events, grouping-limit overflow, unsupported event versions, and numeric overflow. Schema-v1 events remain readable, but their HTTP identity fields are removed before grouping; `legacy_events` makes their older payload-byte semantics explicit and causes `--strict` to fail. Token counts are byte-based estimates for local usage analysis, not provider billing numbers. Without `--file`, a missing telemetry series produces an empty first-run report; an explicitly configured blank path or a series with neither active file nor numeric backup is an error. `--strict` still prints the report, then exits non-zero if delivery failures or data-quality diagnostics are present.
+
+`gokg analyze --rebuild` treats BadgerDB data as disposable but preserves the active root `telemetry.jsonl` file and rotation segments whose names start with `telemetry.jsonl.`. It acquires the same stable non-blocking telemetry lease and refuses to rebuild while an MCP writer is active; stop that MCP process before retrying.
 
 ### 6. Export Visual Graphs
 
@@ -197,7 +207,7 @@ gokg export --format json --out graph.json
 gokg export --workspace my-platform --format json --out workspace-graph.json
 ```
 
-### 6. Analyze Change Impact
+### 7. Analyze Change Impact
 
 ```bash
 # Default: tracked staged + unstaged + untracked changes against HEAD
@@ -224,7 +234,7 @@ gokg impact --workspace my-platform --base main
 
 `gokg analyze` stores graph snapshot metadata such as analyzed time, repo root, module prefix, Git root, Git HEAD, dirty state, and whether `_test.go` files were included. `gokg impact` reads that metadata and reports graph freshness as `fresh`, `stale`, or `unknown` before listing changed and impacted nodes. Use `--strict-stale` in CI to exit non-zero unless freshness is `fresh`. Use `--max-files` and `--max-nodes` to cap large reports.
 
-### 7. Multi-Repo Workspaces
+### 8. Multi-Repo Workspaces
 
 ```bash
 gokg workspace init my-platform

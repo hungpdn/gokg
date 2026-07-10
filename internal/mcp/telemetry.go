@@ -2,10 +2,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"crypto/rand"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,12 +11,22 @@ import (
 	"github.com/hungpdn/gokg/internal/telemetry"
 )
 
+const (
+	telemetryRecordTimeout          = 100 * time.Millisecond
+	telemetryRecordErrorLogInterval = time.Minute
+	maxMCPErrorClassificationBytes  = 512
+)
+
 type telemetryState struct {
 	recorder         telemetry.Recorder
 	defaultSessionID string
 
-	mu      sync.RWMutex
-	clients map[string]telemetryClient
+	clientMu    sync.RWMutex
+	stdioClient telemetryClient
+
+	recordErrorMu             sync.Mutex
+	lastRecordErrorLog        time.Time
+	suppressedRecordErrorLogs uint64
 }
 
 type telemetryClient struct {
@@ -28,11 +36,15 @@ type telemetryClient struct {
 
 type telemetryRequestMetadata struct {
 	transport string
-	sessionID string
-	userAgent string
 }
 
 type telemetryContextKey struct{}
+
+type pendingToolTelemetry struct {
+	toolName     string
+	requestBytes int
+	duration     time.Duration
+}
 
 func WithTelemetryRecorder(recorder telemetry.Recorder) ServerOption {
 	return func(s *Server) {
@@ -41,8 +53,7 @@ func WithTelemetryRecorder(recorder telemetry.Recorder) ServerOption {
 		}
 		s.telemetry = &telemetryState{
 			recorder:         recorder,
-			defaultSessionID: newTelemetrySessionID("stdio"),
-			clients:          make(map[string]telemetryClient),
+			defaultSessionID: "stdio-" + rand.Text(),
 		}
 	}
 }
@@ -57,97 +68,144 @@ func telemetryMetadataFromContext(ctx context.Context) telemetryRequestMetadata 
 }
 
 func (s *Server) rememberTelemetryClient(ctx context.Context, name string, version string) {
-	if s.telemetry == nil {
+	state := s.telemetry
+	if state == nil || telemetryTransport(telemetryMetadataFromContext(ctx)) == "http" {
 		return
 	}
-	name = strings.TrimSpace(name)
-	version = strings.TrimSpace(version)
+	name = strings.Clone(telemetry.SanitizeOptionalLabel(name))
+	version = strings.Clone(telemetry.SanitizeOptionalLabel(version))
 	if name == "" && version == "" {
 		return
 	}
 
-	sessionID := s.telemetrySessionID(ctx)
-	s.telemetry.mu.Lock()
-	defer s.telemetry.mu.Unlock()
-	s.telemetry.clients[sessionID] = telemetryClient{name: name, version: version}
+	state.clientMu.Lock()
+	state.stdioClient = telemetryClient{name: name, version: version}
+	state.clientMu.Unlock()
 }
 
-func (s *Server) recordToolTelemetry(ctx context.Context, toolName string, params json.RawMessage, res *Response, duration time.Duration) {
-	if s.telemetry == nil || s.telemetry.recorder == nil {
+func attachToolTelemetry(res *Response, toolName string, requestBytes int, duration time.Duration) {
+	if res == nil {
 		return
 	}
-	metadata := telemetryMetadataFromContext(ctx)
-	sessionID := s.telemetrySessionID(ctx)
-	client := s.telemetryClient(sessionID)
-
-	responseBytes := 0
-	if res != nil {
-		if encoded, err := json.Marshal(res); err == nil {
-			responseBytes = len(encoded)
-		}
+	if requestBytes < 0 {
+		requestBytes = 0
 	}
+	if duration < 0 {
+		duration = 0
+	}
+	res.telemetry = &pendingToolTelemetry{
+		toolName:     strings.Clone(telemetry.SanitizeLabel(toolName, "unknown")),
+		requestBytes: requestBytes,
+		duration:     duration,
+	}
+}
+
+func (s *Server) recordToolTelemetry(ctx context.Context, res *Response, responseBytes int, deliveryErr error) {
+	state := s.telemetry
+	if state == nil || state.recorder == nil || res == nil || res.telemetry == nil {
+		return
+	}
+	if responseBytes < 0 {
+		responseBytes = 0
+	}
+	pending := res.telemetry
+	metadata := telemetryMetadataFromContext(ctx)
+	transport := telemetryTransport(metadata)
+	sessionID, client := state.telemetryIdentity(transport)
+	success := res.Error == nil && !toolResultIsError(res.Result)
 
 	event := telemetry.Event{
 		Timestamp:     time.Now().UTC(),
 		SessionID:     sessionID,
 		ClientName:    client.name,
 		ClientVersion: client.version,
-		UserAgent:     metadata.userAgent,
-		Transport:     telemetryTransport(metadata),
-		ToolName:      strings.TrimSpace(toolName),
-		Success:       res != nil && res.Error == nil,
-		DurationMS:    duration.Milliseconds(),
-		RequestBytes:  len(params),
+		Transport:     transport,
+		ToolName:      pending.toolName,
+		Success:       success,
+		DurationUS:    pending.duration.Microseconds(),
+		RequestBytes:  pending.requestBytes,
 		ResponseBytes: responseBytes,
+		DeliveryError: deliveryErr != nil,
 	}
 	event.EstimatedInputTokens = telemetry.EstimateTokensFromBytes(event.RequestBytes)
 	event.EstimatedOutputTokens = telemetry.EstimateTokensFromBytes(event.ResponseBytes)
-	if res != nil && res.Error != nil {
+	if res.Error != nil {
 		event.ErrorCode = res.Error.Code
-		event.ErrorKind = classifyMCPError(res.Error.Message)
+		event.ErrorKind = classifyMCPError(res.Error.Code, res.Error.Message)
+	} else if !success {
+		event.ErrorKind = "tool_error"
 	}
 
-	if err := s.telemetry.recorder.Record(context.Background(), event); err != nil {
-		log.Printf("Warning: Failed to record MCP telemetry: %v", err)
+	recordCtx, cancel := context.WithTimeout(context.Background(), telemetryRecordTimeout)
+	defer cancel()
+	if err := state.recorder.Record(recordCtx, event); err != nil {
+		s.logTelemetryRecordError(err)
 	}
 }
 
-func (s *Server) telemetrySessionID(ctx context.Context) string {
-	if s.telemetry == nil {
-		return "unknown"
+func (s *telemetryState) telemetryIdentity(transport string) (string, telemetryClient) {
+	if s == nil || transport == "http" {
+		return "", telemetryClient{}
 	}
-	metadata := telemetryMetadataFromContext(ctx)
-	if strings.TrimSpace(metadata.sessionID) != "" {
-		return strings.TrimSpace(metadata.sessionID)
-	}
-	if metadata.transport == "http" {
-		return "http-unknown-session"
-	}
-	return s.telemetry.defaultSessionID
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+	return s.defaultSessionID, s.stdioClient
 }
 
-func (s *Server) telemetryClient(sessionID string) telemetryClient {
-	if s.telemetry == nil {
-		return telemetryClient{}
+func (s *Server) logTelemetryRecordError(err error) {
+	state := s.telemetry
+	if state == nil || err == nil {
+		return
 	}
-	s.telemetry.mu.RLock()
-	defer s.telemetry.mu.RUnlock()
-	return s.telemetry.clients[sessionID]
+
+	now := time.Now()
+	state.recordErrorMu.Lock()
+	if !state.lastRecordErrorLog.IsZero() &&
+		!now.Before(state.lastRecordErrorLog) &&
+		now.Sub(state.lastRecordErrorLog) < telemetryRecordErrorLogInterval {
+		state.suppressedRecordErrorLogs++
+		state.recordErrorMu.Unlock()
+		return
+	}
+	suppressed := state.suppressedRecordErrorLogs
+	state.suppressedRecordErrorLogs = 0
+	state.lastRecordErrorLog = now
+	state.recordErrorMu.Unlock()
+
+	message := telemetry.SanitizeLabel(err.Error(), "unknown telemetry recorder error")
+	if suppressed > 0 {
+		log.Printf("Warning: Failed to record MCP telemetry: %s (%d similar errors suppressed)", message, suppressed)
+		return
+	}
+	log.Printf("Warning: Failed to record MCP telemetry: %s", message)
 }
 
 func telemetryTransport(metadata telemetryRequestMetadata) string {
-	transport := strings.TrimSpace(metadata.transport)
-	if transport == "" {
-		return "stdio"
+	if metadata.transport == "http" {
+		return "http"
 	}
-	return transport
+	return "stdio"
 }
 
-func newTelemetrySessionID(prefix string) string {
-	return fmt.Sprintf("%s-%d-%d", prefix, os.Getpid(), time.Now().UnixNano())
+func toolResultIsError(result interface{}) bool {
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	isError, _ := resultMap["isError"].(bool)
+	return isError
 }
 
-func classifyMCPError(message string) string {
+func classifyMCPError(code int, message string) string {
+	switch code {
+	case -32601:
+		return "unknown_tool"
+	case -32602:
+		return "invalid_params"
+	}
+	if len(message) > maxMCPErrorClassificationBytes {
+		message = message[:maxMCPErrorClassificationBytes]
+	}
 	lower := strings.ToLower(message)
 	switch {
 	case strings.Contains(lower, "unknown tool"):
