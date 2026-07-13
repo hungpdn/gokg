@@ -196,6 +196,9 @@ gokg telemetry stats --strict
 
 `gokg telemetry stats` opens and verifies a stable set of numeric rotation segments, reads each only to its snapshotted size from the oldest `.N` segment through `.1` and then the active file, and retries briefly if rotation changes that set. It groups records by tool, agent/client, session, and transport with bounded cardinality. Human and JSON reports include `latency_us`, MCP response delivery failures, a documented maximum relative error of 6.25% for p50/p95 histograms (max latency remains exact), and diagnostics for invalid or truncated lines/labels, scrubbed HTTP identity fields, legacy schema-v1 events, grouping-limit overflow, unsupported event versions, and numeric overflow. Schema-v1 events remain readable, but their HTTP identity fields are removed before grouping; `legacy_events` makes their older payload-byte semantics explicit and causes `--strict` to fail. Token counts are byte-based estimates for local usage analysis, not provider billing numbers. Without `--file`, a missing telemetry series produces an empty first-run report; an explicitly configured blank path or a series with neither active file nor numeric backup is an error. `--strict` still prints the report, then exits non-zero if delivery failures or data-quality diagnostics are present.
 
+Reproduce telemetry latency, allocation, and bounded-cardinality claims with
+the local workflow in [docs/telemetry-benchmarks.md](docs/telemetry-benchmarks.md).
+
 `gokg analyze --rebuild` treats BadgerDB data as disposable but preserves the active root `telemetry.jsonl` file and rotation segments whose names start with `telemetry.jsonl.`. It acquires the same stable non-blocking telemetry lease and refuses to rebuild while an MCP writer is active; stop that MCP process before retrying.
 
 ### 6. Export Visual Graphs

@@ -30,6 +30,11 @@ First off, thank you for considering contributing to GoKG! It's people like you 
 
 `scripts/check.sh` verifies formatting, `go vet`, unit tests, buildability, and a real CLI smoke test for `analyze`, `stats`, and `query` using a temporary database. Temporary files are cleaned up automatically when the script exits.
 
+For telemetry performance work, use `make bench-telemetry` and preserve both
+the raw result and its `.meta` file. See
+[docs/telemetry-benchmarks.md](docs/telemetry-benchmarks.md) for fair
+before/after capture, comparison, profiling, and bounded-cardinality checks.
+
 ## Code Style
 We follow standard Go formatting conventions. Please run `go fmt ./...` before committing. CI runs `golangci-lint` v2.12.2; use `make install-tools` and `make lint` to run the same linter locally.
 

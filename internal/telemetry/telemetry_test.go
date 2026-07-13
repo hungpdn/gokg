@@ -382,6 +382,48 @@ func TestReportLimitsAggregateOverflowAndSkipAnonymousGroups(t *testing.T) {
 	assert.Equal(t, uint64(1), report.Diagnostics.GroupLimitOverflows)
 }
 
+func TestReportBuilderDefaultLimitsBoundHighCardinality(t *testing.T) {
+	const eventCount = 10_000
+	limits := DefaultReportLimits()
+	builder := NewReportBuilder("high-cardinality")
+	for index := range eventCount {
+		event := telemetryTestEvent()
+		event.ToolName = fmt.Sprintf("tool-%d", index)
+		event.ClientName = fmt.Sprintf("client-%d", index)
+		event.ClientVersion = ""
+		event.SessionID = fmt.Sprintf("session-%d", index)
+		builder.Add(event)
+	}
+
+	assert.Len(t, builder.toolGroups.groups, limits.Tools)
+	assert.Len(t, builder.clientGroups.groups, limits.Clients)
+	assert.Len(t, builder.sessionGroups.groups, limits.Sessions)
+	assert.Len(t, builder.transportGroups.groups, 1)
+	require.NotNil(t, builder.toolGroups.overflow)
+	require.NotNil(t, builder.clientGroups.overflow)
+	require.NotNil(t, builder.sessionGroups.overflow)
+
+	report := builder.Report()
+	assert.Equal(t, uint64(eventCount), report.TotalCalls)
+	assert.Len(t, report.Tools, limits.Tools+1)
+	assert.Len(t, report.Clients, limits.Clients+1)
+	assert.Len(t, report.Sessions, limits.Sessions+1)
+	assert.Len(t, report.Transports, 1)
+	assert.Equal(t, uint64(3), report.Diagnostics.GroupLimitOverflows)
+	assert.Equal(t, uint64(eventCount-limits.Tools), overflowCalls(report.Tools))
+	assert.Equal(t, uint64(eventCount-limits.Clients), overflowCalls(report.Clients))
+	assert.Equal(t, uint64(eventCount-limits.Sessions), overflowCalls(report.Sessions))
+}
+
+func overflowCalls(groups []GroupStats) uint64 {
+	for _, group := range groups {
+		if group.Overflow {
+			return group.Calls
+		}
+	}
+	return 0
+}
+
 func TestJSONLRecorderRotatesAndReportReadsOldestToActive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	event := telemetryTestEvent()
