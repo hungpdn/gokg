@@ -57,14 +57,14 @@ func compareFiles(w io.Writer, baselinePath, currentPath string) error {
 
 	warnings := metadataWarnings(baselinePath, currentPath)
 	for _, warning := range warnings {
-		fmt.Fprintf(w, "> Warning: %s\n", warning)
+		fmt.Fprintf(w, "> Warning: %s\n", warning) //nolint:errcheck
 	}
 	if len(warnings) > 0 {
-		fmt.Fprintln(w)
+		fmt.Fprintln(w) //nolint:errcheck
 	}
 
-	fmt.Fprintln(w, "| Benchmark | Metric | Baseline (median) | Current (median) | Delta | Relative | Samples |")
-	fmt.Fprintln(w, "|---|---:|---:|---:|---:|---:|---:|")
+	fmt.Fprintln(w, "| Benchmark | Metric | Baseline (median) | Current (median) | Delta | Relative | Samples |") //nolint:errcheck
+	fmt.Fprintln(w, "|---|---:|---:|---:|---:|---:|---:|")                                                        //nolint:errcheck
 	rows := 0
 	for _, name := range names {
 		for _, metric := range metricOrder {
@@ -75,7 +75,7 @@ func compareFiles(w io.Writer, baselinePath, currentPath string) error {
 			}
 			baselineMedian := median(baselineValues)
 			currentMedian := median(currentValues)
-			fmt.Fprintf(
+			fmt.Fprintf( //nolint:errcheck
 				w,
 				"| %s | %s | %s | %s | %s | %s | %d / %d |\n",
 				name,
@@ -94,9 +94,9 @@ func compareFiles(w io.Writer, baselinePath, currentPath string) error {
 		return errors.New("common benchmarks do not contain comparable metrics")
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Delta = (current - baseline) / baseline. Negative is better for ns/op, B/op, and allocs/op.")
-	fmt.Fprintln(w, "Medians summarize repeated samples; use benchstat when you need confidence intervals and significance tests.")
+	fmt.Fprintln(w)                                                                                                                 //nolint:errcheck
+	fmt.Fprintln(w, "Delta = (current - baseline) / baseline. Negative is better for ns/op, B/op, and allocs/op.")                  //nolint:errcheck
+	fmt.Fprintln(w, "Medians summarize repeated samples; use benchstat when you need confidence intervals and significance tests.") //nolint:errcheck
 	return nil
 }
 
@@ -116,7 +116,7 @@ func parseBenchmarkFile(path string) (benchmarkSamples, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	result, passed, err := parseBenchmarks(file)
 	if err != nil {
@@ -270,7 +270,7 @@ func readMetadata(path string) (map[string]string, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	metadata := make(map[string]string)
 	scanner := bufio.NewScanner(file)
