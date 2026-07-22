@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/parser"
 	"github.com/hungpdn/gokg/internal/storage"
+	telemetrypkg "github.com/hungpdn/gokg/internal/telemetry"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -353,12 +355,15 @@ func rebuildBadgerDBPath(dbPath string, explicitDB bool) error {
 	}
 	rebuildPath := filepath.Clean(strings.TrimSpace(dbPath))
 
-	info, err := os.Stat(rebuildPath)
+	info, err := os.Lstat(rebuildPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("inspect db path %q before rebuild: %w", dbPath, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to rebuild symlinked db path %q; use the resolved database directory", dbPath)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("refusing to rebuild non-directory db path %q", dbPath)
@@ -366,9 +371,44 @@ func rebuildBadgerDBPath(dbPath string, explicitDB bool) error {
 	if err := validateExistingRebuildDir(dbPath, rebuildPath); err != nil {
 		return err
 	}
+	telemetryPath := filepath.Join(rebuildPath, filepath.Base(telemetrypkg.DefaultFile))
+	telemetryLease, _, err := telemetrypkg.TryAcquireFileLease(telemetryPath)
+	if err != nil {
+		return fmt.Errorf("refusing to rebuild db path %q while its telemetry file may be active: %w", dbPath, err)
+	}
+	defer func() {
+		if telemetryLease != nil {
+			_ = telemetryLease.Close()
+		}
+	}()
+
+	telemetryArtifacts, err := findRebuildTelemetryArtifacts(rebuildPath)
+	if err != nil {
+		return err
+	}
+	stagingDir, err := stageRebuildTelemetryArtifacts(rebuildPath, telemetryArtifacts)
+	if err != nil {
+		return err
+	}
 	if err := os.RemoveAll(rebuildPath); err != nil {
+		if rollbackErr := restoreRebuildTelemetryArtifacts(rebuildPath, stagingDir, telemetryArtifacts); rollbackErr != nil {
+			return fmt.Errorf("remove db path %q before rebuild: %w; additionally failed to restore telemetry from %q: %v", dbPath, err, stagingDir, rollbackErr)
+		}
+		if cleanupErr := removeRebuildTelemetryStagingDir(stagingDir); cleanupErr != nil {
+			return fmt.Errorf("remove db path %q before rebuild: %w; telemetry was restored but staging cleanup failed: %v", dbPath, err, cleanupErr)
+		}
 		return fmt.Errorf("remove db path %q before rebuild: %w", dbPath, err)
 	}
+	if err := restoreRebuildTelemetryArtifacts(rebuildPath, stagingDir, telemetryArtifacts); err != nil {
+		return fmt.Errorf("restore telemetry after rebuilding db path %q: %w; recover remaining telemetry from %q", dbPath, err, stagingDir)
+	}
+	if err := removeRebuildTelemetryStagingDir(stagingDir); err != nil {
+		return err
+	}
+	if err := telemetryLease.Close(); err != nil {
+		return fmt.Errorf("release telemetry rebuild lease for %q: %w", dbPath, err)
+	}
+	telemetryLease = nil
 	return nil
 }
 
@@ -383,7 +423,144 @@ func validateExistingRebuildDir(dbPath string, rebuildPath string) error {
 	if looksLikeBadgerDBDir(entries) {
 		return nil
 	}
+	if containsOnlyRebuildTelemetryArtifacts(entries) {
+		return nil
+	}
 	return fmt.Errorf("refusing to rebuild non-empty directory %q because it does not look like a complete GoKG BadgerDB database", dbPath)
+}
+
+func containsOnlyRebuildTelemetryArtifacts(entries []os.DirEntry) bool {
+	if len(entries) == 0 {
+		return false
+	}
+	for _, entry := range entries {
+		if !isRebuildTelemetryArtifact(entry.Name()) {
+			return false
+		}
+	}
+	return true
+}
+
+func isRebuildTelemetryArtifact(name string) bool {
+	base := filepath.Base(telemetrypkg.DefaultFile)
+	if strings.EqualFold(name, base) {
+		return true
+	}
+	prefix := base + "."
+	return len(name) > len(prefix) && strings.EqualFold(name[:len(prefix)], prefix)
+}
+
+func findRebuildTelemetryArtifacts(rebuildPath string) ([]string, error) {
+	entries, err := os.ReadDir(rebuildPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspect db directory %q for telemetry before rebuild: %w", rebuildPath, err)
+	}
+
+	names := make([]string, 0)
+	for _, entry := range entries {
+		if !isRebuildTelemetryArtifact(entry.Name()) {
+			continue
+		}
+		artifactPath := filepath.Join(rebuildPath, entry.Name())
+		info, err := os.Lstat(artifactPath)
+		if err != nil {
+			return nil, fmt.Errorf("inspect telemetry artifact %q before rebuild: %w", artifactPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("refusing to rebuild db path %q because telemetry artifact %q is not a regular file", rebuildPath, artifactPath)
+		}
+		names = append(names, entry.Name())
+	}
+	return names, nil
+}
+
+func stageRebuildTelemetryArtifacts(rebuildPath string, names []string) (string, error) {
+	if len(names) == 0 {
+		return "", nil
+	}
+
+	pattern := "." + strings.TrimPrefix(filepath.Base(rebuildPath), ".") + "-telemetry-rebuild-*"
+	stagingDir, err := os.MkdirTemp(filepath.Dir(rebuildPath), pattern)
+	if err != nil {
+		return "", fmt.Errorf("create telemetry staging directory beside %q: %w", rebuildPath, err)
+	}
+
+	staged := make([]string, 0, len(names))
+	for _, name := range names {
+		source := filepath.Join(rebuildPath, name)
+		destination := filepath.Join(stagingDir, name)
+		info, statErr := os.Lstat(source)
+		if statErr != nil || !info.Mode().IsRegular() {
+			if statErr == nil {
+				statErr = fmt.Errorf("not a regular file")
+			}
+			rollbackErr := restoreRebuildTelemetryArtifacts(rebuildPath, stagingDir, staged)
+			if rollbackErr == nil {
+				rollbackErr = removeRebuildTelemetryStagingDir(stagingDir)
+			}
+			if rollbackErr != nil {
+				return "", fmt.Errorf("revalidate telemetry artifact %q before staging: %w; additionally failed to roll back staged telemetry from %q: %v", source, statErr, stagingDir, rollbackErr)
+			}
+			return "", fmt.Errorf("revalidate telemetry artifact %q before staging: %w", source, statErr)
+		}
+		if err := os.Rename(source, destination); err != nil {
+			rollbackErr := restoreRebuildTelemetryArtifacts(rebuildPath, stagingDir, staged)
+			if rollbackErr == nil {
+				rollbackErr = removeRebuildTelemetryStagingDir(stagingDir)
+			}
+			if rollbackErr != nil {
+				return "", fmt.Errorf("stage telemetry artifact %q before rebuild: %w; additionally failed to roll back staged telemetry from %q: %v", source, err, stagingDir, rollbackErr)
+			}
+			return "", fmt.Errorf("stage telemetry artifact %q before rebuild: %w", source, err)
+		}
+		staged = append(staged, name)
+	}
+	return stagingDir, nil
+}
+
+func restoreRebuildTelemetryArtifacts(rebuildPath string, stagingDir string, names []string) error {
+	if stagingDir == "" || len(names) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(rebuildPath, 0o700); err != nil {
+		return fmt.Errorf("recreate db directory for telemetry restore: %w", err)
+	}
+
+	var restoreErrs []error
+	for _, name := range names {
+		source := filepath.Join(stagingDir, name)
+		destination := filepath.Join(rebuildPath, name)
+		if _, err := os.Lstat(source); err != nil {
+			if os.IsNotExist(err) {
+				if destinationInfo, destinationErr := os.Lstat(destination); destinationErr == nil && destinationInfo.Mode().IsRegular() {
+					continue
+				}
+			}
+			restoreErrs = append(restoreErrs, fmt.Errorf("inspect staged telemetry artifact %q: %w", source, err))
+			continue
+		}
+		if _, err := os.Lstat(destination); err == nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("refusing to overwrite telemetry artifact %q during restore", destination))
+			continue
+		} else if !os.IsNotExist(err) {
+			restoreErrs = append(restoreErrs, fmt.Errorf("inspect telemetry restore destination %q: %w", destination, err))
+			continue
+		}
+		if err := os.Rename(source, destination); err != nil {
+			restoreErrs = append(restoreErrs, fmt.Errorf("restore telemetry artifact %q: %w", name, err))
+		}
+	}
+	return errors.Join(restoreErrs...)
+}
+
+func removeRebuildTelemetryStagingDir(stagingDir string) error {
+	if stagingDir == "" {
+		return nil
+	}
+	if err := os.Remove(stagingDir); err != nil {
+		return fmt.Errorf("remove telemetry staging directory %q: %w", stagingDir, err)
+	}
+	return nil
 }
 
 func looksLikeBadgerDBDir(entries []os.DirEntry) bool {

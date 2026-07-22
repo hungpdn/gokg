@@ -5,19 +5,61 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/parser"
+	"github.com/hungpdn/gokg/internal/telemetry"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type recordingTelemetry struct {
+	mu     sync.Mutex
+	events []telemetry.Event
+}
+
+type partialErrorWriter struct {
+	maxBytes int
+	written  int
+	err      error
+}
+
+func (w *partialErrorWriter) Write(p []byte) (int, error) {
+	remaining := w.maxBytes - w.written
+	if remaining <= 0 {
+		return 0, w.err
+	}
+	if remaining > len(p) {
+		remaining = len(p)
+	}
+	w.written += remaining
+	if remaining != len(p) {
+		return remaining, w.err
+	}
+	return remaining, nil
+}
+
+func (r *recordingTelemetry) Record(_ context.Context, event telemetry.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *recordingTelemetry) Events() []telemetry.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]telemetry.Event(nil), r.events...)
+}
 
 func TestHandleInitialize(t *testing.T) {
 	g := graph.NewGraph(nil)
@@ -260,6 +302,92 @@ func TestHandleCallDependenciesMarkdown(t *testing.T) {
 	assert.Contains(t, text, "Found **1** node(s)")
 }
 
+func TestServeTelemetryRecordsStdioClientAndExactPayloadBytes(t *testing.T) {
+	recorder := &recordingTelemetry{}
+	g := graph.NewGraph(nil)
+	ctx := context.Background()
+	requireAddNode(t, g, ctx, &parser.Node{ID: "pkg.Target", Type: parser.NodeTypeFunc, Name: "Target", PkgPath: "pkg"})
+	server := NewServer(g, WithTelemetryRecorder(recorder))
+
+	initBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"codex","version":"5.0"}}}`
+	callBody := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_nodes","arguments":{"query":"Target"}}}`
+	var out bytes.Buffer
+	require.NoError(t, server.Serve(ctx, strings.NewReader(initBody+"\n"+callBody+"\n"), &out))
+	responses := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	require.Len(t, responses, 2)
+	assert.True(t, json.Valid([]byte(responses[0])))
+	assert.True(t, json.Valid([]byte(responses[1])))
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	event := events[0]
+	assert.Equal(t, "search_nodes", event.ToolName)
+	assert.Equal(t, "codex", event.ClientName)
+	assert.Equal(t, "5.0", event.ClientVersion)
+	assert.Equal(t, "stdio", event.Transport)
+	assert.NotEmpty(t, event.SessionID)
+	assert.True(t, event.Success)
+	assert.Equal(t, len(callBody), event.RequestBytes)
+	assert.Equal(t, len(responses[1]), event.ResponseBytes)
+	assert.GreaterOrEqual(t, event.DurationUS, int64(0))
+	assert.False(t, event.DeliveryError)
+	assert.Positive(t, event.EstimatedInputTokens)
+	assert.Positive(t, event.EstimatedOutputTokens)
+}
+
+func TestServeTelemetryCanonicalizesUnknownToolName(t *testing.T) {
+	recorder := &recordingTelemetry{}
+	server := NewServer(graph.NewGraph(nil), WithTelemetryRecorder(recorder))
+
+	const secretToolName = "nonexistent-secret-tool-name"
+	callBody := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"` + secretToolName + `","arguments":{"secret":"not recorded"}}}`
+	var out bytes.Buffer
+	require.NoError(t, server.Serve(context.Background(), strings.NewReader(callBody+"\n"), &out))
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	event := events[0]
+	assert.Equal(t, "unknown", event.ToolName)
+	assert.False(t, event.Success)
+	assert.Equal(t, -32601, event.ErrorCode)
+	assert.Equal(t, "unknown_tool", event.ErrorKind)
+	encoded, err := json.Marshal(event)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), secretToolName)
+}
+
+func TestServeTelemetryRecordsDeliveryFailure(t *testing.T) {
+	recorder := &recordingTelemetry{}
+	server := NewServer(graph.NewGraph(nil), WithTelemetryRecorder(recorder))
+	callBody := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_nodes","arguments":{"query":"Target"}}}`
+	w := &partialErrorWriter{maxBytes: 7, err: io.ErrClosedPipe}
+
+	err := server.Serve(context.Background(), strings.NewReader(callBody+"\n"), w)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+
+	events := recorder.Events()
+	require.Len(t, events, 1)
+	event := events[0]
+	assert.Equal(t, "search_nodes", event.ToolName)
+	assert.Equal(t, len(callBody), event.RequestBytes)
+	assert.Equal(t, w.written, event.ResponseBytes)
+	assert.True(t, event.DeliveryError)
+}
+
+func TestHandleToolsCallTelemetryDisabledDoesNotAttachTelemetry(t *testing.T) {
+	server := NewServer(graph.NewGraph(nil))
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      5,
+		Method:  "tools/call",
+		Params:  json.RawMessage(`{"name":"search_nodes","arguments":{"query":"x"}}`),
+	}
+
+	res := server.handleRequest(req)
+	require.NotNil(t, res)
+	assert.Nil(t, res.telemetry)
+}
+
 func TestHandleCallGetImplementations(t *testing.T) {
 	g := graph.NewGraph(nil)
 	ctx := context.Background()
@@ -465,6 +593,21 @@ func TestHandleCallUnknownTool(t *testing.T) {
 	require.NotNil(t, res)
 	assert.NotNil(t, res.Error)
 	assert.Contains(t, res.Error.Message, "Unknown tool")
+}
+
+func TestHandleCallUnknownToolBoundsEchoedName(t *testing.T) {
+	server := NewServer(graph.NewGraph(nil))
+	params, err := json.Marshal(map[string]interface{}{
+		"name":      strings.Repeat("X", 4<<20),
+		"arguments": map[string]interface{}{},
+	})
+	require.NoError(t, err)
+
+	res := server.handleRequest(&Request{JSONRPC: "2.0", ID: 7, Method: "tools/call", Params: params})
+	require.NotNil(t, res)
+	require.NotNil(t, res.Error)
+	assert.Less(t, len(res.Error.Message), 2048)
+	assert.Contains(t, res.Error.Message, "...")
 }
 
 func TestHandleCallChangeImpactRequiresRepoRoots(t *testing.T) {

@@ -1,4 +1,5 @@
-.PHONY: all build build-debug test check clean format install install-tools lint security
+.PHONY: all build build-debug test check test-race test-coverage bench-telemetry \
+	bench-telemetry-bounds bench-telemetry-compare clean format install install-tools lint security
 
 BINARY_NAME ?= gokg
 GO ?= go
@@ -7,6 +8,10 @@ VERSION ?= dev
 COMMIT ?= none
 DATE ?= unknown
 GOLANGCI_LINT_VERSION ?= v2.12.2
+BENCH_COUNT ?= 10
+BENCH_TIME ?= 1s
+BENCH_CPU ?=
+BENCH_OUTPUT ?=
 VERSION_PKG := github.com/hungpdn/gokg/internal/version
 GO_LDFLAGS ?= -s -w -buildid= -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
@@ -30,6 +35,18 @@ test-race:
 test-coverage:
 	$(GO) test -v -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
+
+bench-telemetry:
+	GO="$(GO)" BENCH_COUNT="$(BENCH_COUNT)" BENCH_TIME="$(BENCH_TIME)" \
+		BENCH_CPU="$(BENCH_CPU)" BENCH_OUTPUT="$(BENCH_OUTPUT)" ./scripts/bench-telemetry.sh
+
+bench-telemetry-bounds:
+	$(GO) test -run '^TestReportBuilderDefaultLimitsBoundHighCardinality$$' -count=1 ./internal/telemetry
+
+bench-telemetry-compare:
+	@test -n "$(BEFORE)" || { printf 'BEFORE is required\n' >&2; exit 2; }
+	@test -n "$(AFTER)" || { printf 'AFTER is required\n' >&2; exit 2; }
+	GO="$(GO)" ./scripts/compare-telemetry-benchmarks.sh "$(BEFORE)" "$(AFTER)"
 
 format:
 	$(GO) fmt ./...

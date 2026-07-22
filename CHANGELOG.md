@@ -8,9 +8,24 @@ The format follows Keep a Changelog, and this project uses semantic versioning o
 
 ### Added
 
+- Opt-in MCP tool-call telemetry with local JSONL recording via `gokg mcp --telemetry`.
+- `gokg telemetry stats` command for summarizing local MCP telemetry by tool, client, session, and transport.
+- Telemetry file rotation controls via `--telemetry-max-bytes` and `--telemetry-max-backups`, plus strict report validation via `gokg telemetry stats --strict`.
+
 ### Changed
 
+- Raised the minimum Go patch level to 1.25.12 and selected the patched Go 1.26.5 toolchain to pick up standard-library security fixes used by telemetry's rooted file operations.
+- MCP telemetry now records after response encoding, uses delimiter-free JSON payload byte counts and microsecond latency, sanitizes user-controlled labels, and writes through a bounded async recorder with observable backpressure/failures and shutdown flushing.
+- HTTP telemetry is anonymous and stateless; untrusted HTTP session, client, and user-agent metadata is not persisted.
+- `gokg telemetry stats` now streams a size-bounded, rotation-verified JSONL snapshot instead of loading all events into memory, documents the 6.25% p50/p95 histogram error bound, scrubs legacy HTTP identity fields, and reports response-delivery failures plus invalid, truncated, legacy-schema, grouping-limit, unsupported-version, and numeric-overflow diagnostics.
+- Explicit telemetry file/rotation flags now require `--telemetry`; explicit missing or blank stats paths and unexpected positional arguments fail with actionable errors, while an absent default stats file remains a successful empty first-run report.
+
 ### Fixed
+
+- MCP telemetry no longer marshals large tool responses a second time just to estimate response size.
+- `gokg analyze --rebuild` now preserves the root `telemetry.jsonl` file and its `telemetry.jsonl.*` rotation segments instead of deleting usage history with BadgerDB data.
+- Bounded asynchronous telemetry no longer silently drops saturated records or hides recorder failures.
+- A cross-platform non-blocking lock now rejects multiple MCP processes targeting the same telemetry file, preventing rotation and retention corruption.
 
 ## [v0.1.0] - 2026-07-08
 

@@ -9,16 +9,19 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/impact"
 	"github.com/hungpdn/gokg/internal/parser"
+	"github.com/hungpdn/gokg/internal/telemetry"
 	"github.com/hungpdn/gokg/internal/version"
 )
 
 type Server struct {
 	graph       *graph.Graph
 	impactRepos []impact.Repo
+	telemetry   *telemetryState
 }
 
 type ServerOption func(*Server)
@@ -58,6 +61,8 @@ type Request struct {
 	ID      interface{}     `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
+
+	requestBytes int
 }
 
 type Response struct {
@@ -65,6 +70,8 @@ type Response struct {
 	ID      interface{} `json:"id"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *Error      `json:"error,omitempty"`
+
+	telemetry *pendingToolTelemetry
 }
 
 type Error struct {
@@ -93,11 +100,19 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			}
 			continue
 		}
-
-		res := s.handleRequestContext(ctx, &req)
+		reqCtx := ctx
+		if s.telemetry != nil {
+			req.requestBytes = len(line)
+			reqCtx = withTelemetryRequestMetadata(ctx, telemetryRequestMetadata{transport: "stdio"})
+		}
+		res := s.handleRequestContext(reqCtx, &req)
 		if res != nil {
-			if err := writeResponse(out, res); err != nil {
-				return err
+			responseBytes, deliveryErr := writeResponse(out, res)
+			if s.telemetry != nil {
+				s.recordToolTelemetry(reqCtx, res, responseBytes, deliveryErr)
+			}
+			if deliveryErr != nil {
+				return deliveryErr
 			}
 		}
 	}
@@ -115,7 +130,7 @@ func (s *Server) handleRequestContext(ctx context.Context, req *Request) *Respon
 
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req)
+		return s.handleInitialize(ctx, req)
 	case "notifications/initialized":
 		return nil
 	case "tools/list":
@@ -130,15 +145,20 @@ func (s *Server) handleRequestContext(ctx context.Context, req *Request) *Respon
 	return nil
 }
 
-func (s *Server) handleInitialize(req *Request) *Response {
+func (s *Server) handleInitialize(ctx context.Context, req *Request) *Response {
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
+		ClientInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
 	}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
 		}
 	}
+	s.rememberTelemetryClient(ctx, params.ClientInfo.Name, params.ClientInfo.Version)
 
 	return &Response{ID: req.ID, JSONRPC: "2.0", Result: map[string]interface{}{
 		"protocolVersion": negotiateMCPProtocolVersion(params.ProtocolVersion),
@@ -166,17 +186,34 @@ func (s *Server) handleToolsList(req *Request) *Response {
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+	if s.telemetry == nil {
+		res, _ := s.dispatchToolCall(ctx, req)
+		return res
+	}
+
+	start := time.Now()
+	res, toolName := s.dispatchToolCall(ctx, req)
+	requestBytes := req.requestBytes
+	if requestBytes <= 0 {
+		requestBytes = len(req.Params)
+	}
+	attachToolTelemetry(res, toolName, requestBytes, time.Since(start))
+	return res
+}
+
+func (s *Server) dispatchToolCall(ctx context.Context, req *Request) (*Response, string) {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}
+		return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32602, Message: "Invalid params"}}, "unknown"
 	}
 
 	for _, tool := range s.toolDefinitions() {
 		if tool.name == params.Name {
-			return tool.handler(s, ctx, req.ID, params.Arguments)
+			return tool.handler(s, ctx, req.ID, params.Arguments), tool.name
 		}
 	}
-	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + params.Name}}
+	safeName := telemetry.SanitizeLabel(params.Name, "unknown")
+	return &Response{ID: req.ID, JSONRPC: "2.0", Error: &Error{Code: -32601, Message: "Unknown tool: " + safeName}}, "unknown"
 }
 
 // --- Markdown formatting helpers ---
@@ -396,18 +433,37 @@ func (s *Server) errorResult(id interface{}, err error) *Response {
 }
 
 func writeError(out io.Writer, id interface{}, code int, message string) error {
-	return writeResponse(out, &Response{
+	_, err := writeResponse(out, &Response{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &Error{Code: code, Message: message},
 	})
+	return err
 }
 
-func writeResponse(out io.Writer, res *Response) error {
+func writeResponse(out io.Writer, res *Response) (int, error) {
 	data, err := json.Marshal(res)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = fmt.Fprintf(out, "%s\n", data)
-	return err
+	payloadBytes, err := out.Write(data)
+	if payloadBytes < 0 {
+		payloadBytes = 0
+	} else if payloadBytes > len(data) {
+		payloadBytes = len(data)
+	}
+	if err != nil {
+		return payloadBytes, err
+	}
+	if payloadBytes != len(data) {
+		return payloadBytes, io.ErrShortWrite
+	}
+	newlineBytes, err := out.Write([]byte{'\n'})
+	if err != nil {
+		return payloadBytes, err
+	}
+	if newlineBytes != 1 {
+		return payloadBytes, io.ErrShortWrite
+	}
+	return payloadBytes, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/hungpdn/gokg/internal/graph"
 	"github.com/hungpdn/gokg/internal/storage"
+	telemetrypkg "github.com/hungpdn/gokg/internal/telemetry"
 	"github.com/hungpdn/gokg/internal/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +111,163 @@ func TestAnalyzeRebuildRemovesStaleDB(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.NoFileExists(t, staleFile)
 	assert.DirExists(t, dbDir)
+}
+
+func TestAnalyzeRebuildPreservesTelemetryArtifacts(t *testing.T) {
+	withGoBuildCache(t)
+	projectDir := newTinyGoProject(t)
+	dbDir := filepath.Join(projectDir, ".gokg")
+	store, err := storage.NewBadgerStorage(dbDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	base := filepath.Base(telemetrypkg.DefaultFile)
+	wantFiles := map[string][]byte{
+		base:        []byte("{\"tool_name\":\"current\"}\n"),
+		base + ".1": []byte("{\"tool_name\":\"rotated-1\"}\n"),
+		base + ".2": []byte("{\"tool_name\":\"rotated-2\"}\n"),
+	}
+	for name, content := range wantFiles {
+		require.NoError(t, os.WriteFile(filepath.Join(dbDir, name), content, 0o600))
+	}
+	staleFile := filepath.Join(dbDir, "STALE")
+	require.NoError(t, os.WriteFile(staleFile, []byte("old data"), 0o644))
+
+	withWorkingDir(t, projectDir)
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--rebuild", "--gc=false"})
+
+	require.NoError(t, cmd.Execute())
+	assert.NoFileExists(t, staleFile)
+	for name, want := range wantFiles {
+		got, err := os.ReadFile(filepath.Join(dbDir, name))
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	}
+	reopened, err := storage.NewBadgerStorage(dbDir)
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+	stagingDirs, err := filepath.Glob(filepath.Join(projectDir, ".gokg-telemetry-rebuild-*"))
+	require.NoError(t, err)
+	assert.Empty(t, stagingDirs)
+}
+
+func TestAnalyzeRebuildAllowsTelemetryOnlyDefaultDirectory(t *testing.T) {
+	withGoBuildCache(t)
+	projectDir := newTinyGoProject(t)
+	dbDir := filepath.Join(projectDir, ".gokg")
+	require.NoError(t, os.MkdirAll(dbDir, 0o700))
+	telemetryPath := filepath.Join(dbDir, filepath.Base(telemetrypkg.DefaultFile))
+	want := []byte("{\"tool_name\":\"before-analysis\"}\n")
+	require.NoError(t, os.WriteFile(telemetryPath, want, 0o600))
+
+	withWorkingDir(t, projectDir)
+	cmd := newAnalyzeCommand()
+	cmd.SetArgs([]string{"--rebuild", "--gc=false"})
+
+	require.NoError(t, cmd.Execute())
+	got, err := os.ReadFile(telemetryPath)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.FileExists(t, filepath.Join(dbDir, "MANIFEST"))
+}
+
+func TestRebuildBadgerDBPathPreservesTelemetryArtifactsForCustomDB(t *testing.T) {
+	dbDir := filepath.Join(t.TempDir(), "custom-db")
+	store, err := storage.NewBadgerStorage(dbDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	base := filepath.Base(telemetrypkg.DefaultFile)
+	wantFiles := map[string][]byte{
+		base:        []byte("active\n"),
+		base + ".3": []byte("oldest\n"),
+	}
+	for name, content := range wantFiles {
+		require.NoError(t, os.WriteFile(filepath.Join(dbDir, name), content, 0o600))
+	}
+
+	require.NoError(t, rebuildBadgerDBPath(dbDir, true))
+	for name, want := range wantFiles {
+		got, err := os.ReadFile(filepath.Join(dbDir, name))
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	}
+	assert.NoFileExists(t, filepath.Join(dbDir, "MANIFEST"))
+	stagingDirs, err := filepath.Glob(filepath.Join(filepath.Dir(dbDir), ".custom-db-telemetry-rebuild-*"))
+	require.NoError(t, err)
+	assert.Empty(t, stagingDirs)
+}
+
+func TestRebuildBadgerDBPathRejectsUnsafeTelemetryArtifacts(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, dbDir string) string
+	}{
+		{
+			name: "directory",
+			setup: func(t *testing.T, dbDir string) string {
+				t.Helper()
+				path := filepath.Join(dbDir, filepath.Base(telemetrypkg.DefaultFile))
+				require.NoError(t, os.Mkdir(path, 0o700))
+				return path
+			},
+		},
+		{
+			name: "symlinked rotation segment",
+			setup: func(t *testing.T, dbDir string) string {
+				t.Helper()
+				target := filepath.Join(t.TempDir(), "outside.jsonl")
+				require.NoError(t, os.WriteFile(target, []byte("outside"), 0o600))
+				path := filepath.Join(dbDir, filepath.Base(telemetrypkg.DefaultFile)+".1")
+				if err := os.Symlink(target, path); err != nil {
+					t.Skipf("symlinks are unavailable: %v", err)
+				}
+				return path
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbDir := filepath.Join(t.TempDir(), "db")
+			store, err := storage.NewBadgerStorage(dbDir)
+			require.NoError(t, err)
+			require.NoError(t, store.Close())
+			artifactPath := tt.setup(t, dbDir)
+
+			err = rebuildBadgerDBPath(dbDir, true)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not a regular file")
+			assert.DirExists(t, dbDir)
+			_, statErr := os.Lstat(artifactPath)
+			assert.NoError(t, statErr)
+			assert.FileExists(t, filepath.Join(dbDir, "MANIFEST"))
+		})
+	}
+}
+
+func TestRestoreRebuildTelemetryArtifactsDoesNotOverwriteConcurrentFile(t *testing.T) {
+	root := t.TempDir()
+	rebuildPath := filepath.Join(root, "db")
+	stagingDir := filepath.Join(root, "staging")
+	require.NoError(t, os.MkdirAll(rebuildPath, 0o700))
+	require.NoError(t, os.MkdirAll(stagingDir, 0o700))
+	name := filepath.Base(telemetrypkg.DefaultFile)
+	stagedPath := filepath.Join(stagingDir, name)
+	destinationPath := filepath.Join(rebuildPath, name)
+	require.NoError(t, os.WriteFile(stagedPath, []byte("preserved"), 0o600))
+	require.NoError(t, os.WriteFile(destinationPath, []byte("concurrent"), 0o600))
+
+	err := restoreRebuildTelemetryArtifacts(rebuildPath, stagingDir, []string{name})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to overwrite")
+	staged, readErr := os.ReadFile(stagedPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("preserved"), staged)
+	destination, readErr := os.ReadFile(destinationPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("concurrent"), destination)
 }
 
 func TestAnalyzeResolvesSingleNestedModule(t *testing.T) {
@@ -235,6 +393,26 @@ func TestRebuildBadgerDBPathRejectsFiles(t *testing.T) {
 	assert.Contains(t, err.Error(), "non-directory")
 }
 
+func TestRebuildBadgerDBPathRejectsSymlinkedDBRoot(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real-db")
+	require.NoError(t, os.Mkdir(target, 0o700))
+	marker := filepath.Join(target, "important")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o600))
+	link := filepath.Join(root, "linked-db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	err := rebuildBadgerDBPath(link, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlinked db path")
+	assert.FileExists(t, marker)
+	info, statErr := os.Lstat(link)
+	require.NoError(t, statErr)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink)
+}
+
 func TestRebuildBadgerDBPathRejectsNonBadgerDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "not-a-db")
 	require.NoError(t, os.MkdirAll(dir, 0755))
@@ -266,6 +444,36 @@ func TestRebuildBadgerDBPathAllowsEmptyDirectory(t *testing.T) {
 
 	require.NoError(t, rebuildBadgerDBPath(dir, true))
 	assert.NoDirExists(t, dir)
+}
+
+func TestRebuildBadgerDBPathRejectsActiveTelemetryWriter(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "db")
+	telemetryPath := filepath.Join(dir, filepath.Base(telemetrypkg.DefaultFile))
+	recorder, err := telemetrypkg.NewJSONLRecorder(telemetryPath)
+	require.NoError(t, err)
+	defer func() {
+		if recorder != nil {
+			_ = recorder.Close()
+		}
+	}()
+	require.NoError(t, recorder.Record(context.Background(), telemetrypkg.Event{
+		SessionID: "session", Transport: "stdio", ToolName: "search_nodes", Success: true,
+	}))
+
+	err = rebuildBadgerDBPath(dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "telemetry file may be active")
+	assert.DirExists(t, dir)
+	report, reportErr := telemetrypkg.BuildReportFromJSONL(telemetryPath)
+	require.NoError(t, reportErr)
+	assert.Equal(t, uint64(1), report.TotalCalls)
+
+	require.NoError(t, recorder.Close())
+	recorder = nil
+	require.NoError(t, rebuildBadgerDBPath(dir, true))
+	report, reportErr = telemetrypkg.BuildReportFromJSONL(telemetryPath)
+	require.NoError(t, reportErr)
+	assert.Equal(t, uint64(1), report.TotalCalls)
 }
 
 func TestAnalyzeWorkspaceRebuildRejectsNonBadgerDirectory(t *testing.T) {

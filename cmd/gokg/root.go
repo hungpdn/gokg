@@ -26,5 +26,6 @@ func init() {
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(impactCmd)
+	rootCmd.AddCommand(telemetryCmd)
 	rootCmd.AddCommand(versionCmd)
 }
